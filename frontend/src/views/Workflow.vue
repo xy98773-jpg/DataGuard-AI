@@ -1,0 +1,657 @@
+<script setup lang="ts">
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { storeToRefs } from 'pinia'
+import { ElMessage } from 'element-plus'
+import AgentDetail from '../components/AgentDetail.vue'
+import ReportDrawer from '../components/ReportDrawer.vue'
+import TracePanel from '../components/TracePanel.vue'
+import WorkflowGraph from '../components/WorkflowGraph.vue'
+import { useAppStore } from '../stores/app'
+import { enZh, ISSUE_TYPE_ZH, NODE_ZH, RISK_ZH, SEVERITY_ZH, STATUS_ZH, TOOL_ZH } from '../utils/i18n'
+
+const store = useAppStore()
+const route = useRoute()
+const router = useRouter()
+const { dataset, runStatus, issues, plan, validation, traceEvents, selectedNode, outputs, activeDatasetId, activeRunId, reportDrawerOpen } = storeToRefs(store)
+
+const uploading = ref(false)
+const uploadName = ref('')
+const datasets = ref<any[]>([])
+let timer: number | null = null
+
+const statusZh = computed(() => enZh(runStatus.value?.status, STATUS_ZH))
+const currentNodeZh = computed(() => {
+  const st = runStatus.value?.node_states ?? {}
+  const running = Object.keys(st).find((k) => st[k] === 'running')
+  return running ? enZh(running, NODE_ZH) : ''
+})
+
+// ---- 数据集 ----
+
+async function loadDatasets() {
+  try {
+    const resp = await fetch('/api/dataset/list')
+    const body = await resp.json()
+    datasets.value = (body.datasets ?? []).map((d: any) => ({
+      dataset_id: d.id,
+      filename: d.filename,
+      rows: d.row_count,
+      source_type: d.source_type,
+    }))
+  } catch {
+    /* ignore */
+  }
+}
+
+function selectDataset(d: any) {
+  store.dataset = d
+  store.setActiveDataset(d.dataset_id)
+  store.activeRunId = ''
+  store.resetRun()
+  outputs.value = null  // 清除上一数据集的治理成果，避免残留
+  stopPoll()
+  ElMessage.success(`已选择数据集：${d.filename}`)
+}
+
+async function onUpload(file: File) {
+  uploading.value = true
+  const fd = new FormData()
+  fd.append('file', file)
+  if (uploadName.value.trim()) fd.append('name', uploadName.value.trim())
+  try {
+    const resp = await fetch('/api/dataset/upload', { method: 'POST', body: fd })
+    const body = await resp.json()
+    if (!resp.ok) {
+      ElMessage.error(body.detail || '上传失败')
+      return
+    }
+    store.dataset = body
+    store.setActiveDataset(body.dataset_id)
+    store.activeRunId = ''
+    store.resetRun()
+    outputs.value = null  // 清除上一数据集的治理成果
+    stopPoll()
+    await loadDatasets()
+    ElMessage.success(`已上传 ${body.filename}（${body.rows} 行）`)
+  } catch (e: any) {
+    ElMessage.error(String(e))
+  } finally {
+    uploading.value = false
+  }
+}
+
+// ---- 启动与轮询 ----
+
+async function startGovernance() {
+  if (!store.dataset) return
+  const resp = await fetch('/api/workflow/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ dataset_id: store.dataset.dataset_id, goal: '数据质量治理' }),
+  })
+  const body = await resp.json()
+  if (!resp.ok) {
+    ElMessage.error(body.detail || '启动失败')
+    return
+  }
+  store.activeRunId = body.run_id
+  store.runStatus = { status: 'RUNNING', progress: 0, node_states: {} }
+  store.resetRun()
+  outputs.value = null  // 新运行开始前清除旧成果
+  await poll()
+  timer = window.setInterval(poll, 1500)
+}
+
+async function poll() {
+  if (!store.activeRunId) return
+  try {
+    // 并行拉取状态 + trace，事件流实时累积（不再等流程结束）
+    const [statusResp, traceResp] = await Promise.all([
+      fetch(`/api/workflow/${store.activeRunId}`),
+      fetch(`/api/trace/${store.activeRunId}`),
+    ])
+    const status = await statusResp.json()
+    store.runStatus = status
+    store.traceEvents = (await traceResp.json()).events ?? []
+    if (status.status === 'SUCCESS' || status.status === 'FAILED') {
+      stopPoll()
+      await loadResults()
+      if (status.status === 'FAILED') ElMessage.error(`治理流程失败（${NODE_ZH[status.current_node] ?? status.current_node}）`)
+    }
+  } catch {
+    /* 轮询暂时失败，继续 */
+  }
+}
+
+async function loadResults() {
+  const dsId = store.dataset?.dataset_id || store.activeDatasetId
+  const [issuesResp, planResp, validationResp, traceResp, outputsResp] = await Promise.all([
+    fetch(`/api/issues/${store.activeRunId}`),
+    fetch(`/api/plan/${store.activeRunId}`),
+    fetch(`/api/validation/${store.activeRunId}`),
+    fetch(`/api/trace/${store.activeRunId}`),
+    dsId ? fetch(`/api/dataset/${dsId}/outputs`) : Promise.resolve({ json: () => ({}) }),
+  ])
+  store.issues = (await issuesResp.json()).issues ?? []
+  store.plan = (await planResp.json()).actions ?? []
+  store.validation = await validationResp.json()
+  store.traceEvents = (await traceResp.json()).events ?? []
+  outputs.value = await outputsResp.json()
+}
+
+function onNodeClick(nodeId: string) {
+  store.selectedNode = nodeId
+}
+
+// 打开治理报告弹窗（函数式，避免模板内联赋值的歧义）
+function openReport() {
+  store.reportDrawerOpen = true
+}
+function closeReport() {
+  store.reportDrawerOpen = false
+}
+
+// 抽屉打开时若报告数据未就绪（如刷新后），自动重新拉取一次
+watch(reportDrawerOpen, (open) => {
+  if (open && store.activeRunId && !outputs.value?.report) {
+    loadResults()
+  }
+})
+
+function stopPoll() {
+  if (timer !== null) {
+    window.clearInterval(timer)
+    timer = null
+  }
+}
+
+// ---- 步骤引导（el-steps）----
+
+function stepStatus(idx: number): 'waiting' | 'process' | 'success' | 'error' {
+  const st = store.runStatus?.node_states ?? {}
+  const s = store.runStatus?.status ?? ''
+  const milestones: Array<() => boolean> = [
+    () => !!store.dataset,
+    () => !!store.activeRunId,
+    () => st.profiler === 'success',
+    () => st.inspector === 'success',
+    () => st.planner === 'success' && st.plan_validator === 'success',
+    () => st.risk === 'success' && (st.approval === 'success' || !st.approval),
+    () => st.execution === 'success',
+    () => st.validator === 'success' || s === 'SUCCESS',
+  ]
+  if (idx === milestones.length - 1 && s === 'FAILED') return 'error'
+  for (let i = 0; i < milestones.length; i++) {
+    if (!milestones[i]()) {
+      return i === idx ? 'process' : 'waiting'
+    }
+  }
+  return 'success'
+}
+
+const steps = [
+  { title: '上传数据集', desc: 'CSV / Excel / JSON' },
+  { title: '启动治理', desc: 'Supervisor 规划流程' },
+  { title: '分析画像', desc: 'Profiler 数据画像' },
+  { title: '发现问题', desc: 'Inspector 质量检测' },
+  { title: '规划方案', desc: 'Planner 清洗计划' },
+  { title: '风险审批', desc: 'Risk + 人工审批' },
+  { title: '执行清洗', desc: 'Execution 执行工具' },
+  { title: '结果验证', desc: 'Validator 质量评分' },
+]
+
+// ---- 恢复（页面切换/刷新后继续跟踪到终态）----
+
+// 从数据源注册跳转而来（query.dataset 携带新数据集 id）：
+// 响应式监听（immediate 覆盖首次挂载，watch 覆盖组件复用时的 query 变化），
+// 自动选中新数据集并清空旧运行状态（resetRun 统一清空含 outputs），避免旧检测信息残留。
+watch(
+  () => route.query.dataset,
+  (freshDsId) => {
+    if (!freshDsId) return
+    const d = datasets.value.find((x: any) => x.dataset_id === freshDsId)
+    if (d) store.dataset = d
+    store.setActiveDataset(String(freshDsId))
+    store.activeRunId = ''
+    store.resetRun()
+    stopPoll()
+    // 清除 query，避免刷新后重复触发
+    router.replace({ path: '/workflow' })
+  },
+  { immediate: true },
+)
+
+onMounted(async () => {
+  await loadDatasets()
+  // 先恢复数据集信息（loadResults 依赖 store.dataset 拉取 outputs）
+  if (!store.dataset && store.activeDatasetId) {
+    const d = datasets.value.find((x: any) => x.dataset_id === store.activeDatasetId)
+    if (d) store.dataset = d
+  }
+  if (store.activeRunId) {
+    // 恢复运行：立即拉一次，然后持续轮询直到终态；同时加载当前可见数据
+    await poll()
+    await loadResults()
+    if (store.runStatus && !['SUCCESS', 'FAILED'].includes(store.runStatus.status)) {
+      timer = window.setInterval(poll, 1500)
+    }
+  }
+})
+
+onUnmounted(stopPoll)
+</script>
+
+<template>
+  <div class="workflow-page">
+    <el-card shadow="never" class="steps-card">
+      <el-steps
+        :active="steps.findIndex((_, i) => stepStatus(i) === 'process') === -1 ? steps.length : steps.findIndex((_, i) => stepStatus(i) === 'process')"
+        align-center
+        finish-status="success"
+        process-status="process"
+      >
+        <el-step v-for="(s, i) in steps" :key="i" :title="s.title" :description="s.desc" />
+      </el-steps>
+    </el-card>
+
+    <el-row :gutter="12">
+      <!-- 左侧：数据集 -->
+      <el-col :span="6">
+        <el-card shadow="never" class="panel">
+          <template #header>数据集</template>
+          <el-input v-model="uploadName" placeholder="数据集名称（可选，默认用文件名）" clearable class="upload-name" />
+          <el-upload
+            drag
+            :auto-upload="false"
+            :show-file-list="false"
+            accept=".csv,.xlsx,.xls,.json"
+            :on-change="(f: any) => onUpload(f.raw)"
+            :disabled="uploading"
+          >
+            <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
+            <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
+            <template #tip>
+              <div class="el-upload__tip">支持 CSV / Excel / JSON</div>
+            </template>
+          </el-upload>
+
+          <el-descriptions v-if="dataset" :column="1" border class="dataset-info" size="small">
+            <el-descriptions-item label="数据集 ID">{{ dataset.dataset_id }}</el-descriptions-item>
+            <el-descriptions-item label="文件名">{{ dataset.filename }}</el-descriptions-item>
+            <el-descriptions-item label="行数">{{ dataset.rows }}</el-descriptions-item>
+            <el-descriptions-item label="列数">{{ dataset.columns ?? '-' }}</el-descriptions-item>
+          </el-descriptions>
+
+          <el-button type="primary" size="large" class="start-btn" :disabled="!dataset || !!activeRunId" @click="startGovernance">
+            开始治理
+          </el-button>
+
+          <template v-if="validation">
+            <el-divider content-position="left">质量评分</el-divider>
+            <div class="score-block">
+              <div class="score-line">
+                <span>治理前</span>
+                <el-progress :percentage="Math.round(validation.before_score)" :stroke-width="12" color="#f56c6c" :format="() => validation.before_score.toFixed(1)" />
+              </div>
+              <div class="score-line">
+                <span>治理后</span>
+                <el-progress :percentage="Math.round(validation.after_score)" :stroke-width="12" color="#67c23a" :format="() => validation.after_score.toFixed(1)" />
+              </div>
+              <el-tag :type="validation.status === 'PASS' ? 'success' : 'danger'" size="small" effect="dark">
+                {{ validation.status === 'PASS' ? 'PASS（验证通过）' : 'FAIL（验证失败）' }}
+              </el-tag>
+            </div>
+          </template>
+
+          <el-divider content-position="left">历史数据集</el-divider>
+          <div class="history-list">
+            <div v-if="!datasets.length" class="history-empty">暂无历史数据集</div>
+            <div
+              v-for="d in datasets"
+              :key="d.dataset_id"
+              class="history-item"
+              :class="{ active: dataset?.dataset_id === d.dataset_id }"
+              @click="selectDataset(d)"
+            >
+              <span class="history-name">{{ d.filename }}</span>
+              <span class="history-meta">{{ d.rows }} 行</span>
+            </div>
+          </div>
+        </el-card>
+      </el-col>
+
+      <!-- 中间：工作流图谱 -->
+      <el-col :span="10">
+        <el-card shadow="never" class="panel">
+          <template #header>
+            <div class="card-head">
+              <span>工作流图谱</span>
+              <template v-if="activeRunId">
+                <el-tag
+                  :type="runStatus?.status === 'SUCCESS' ? 'success' : runStatus?.status === 'FAILED' ? 'danger' : runStatus?.status === 'WAITING_APPROVAL' ? 'warning' : 'primary'"
+                  size="small"
+                  effect="dark"
+                >
+                  {{ statusZh }}
+                </el-tag>
+                <span class="run-id">{{ activeRunId }}</span>
+                <span v-if="currentNodeZh" class="current-node">当前：{{ currentNodeZh }}</span>
+              </template>
+            </div>
+          </template>
+
+          <template v-if="!activeRunId">
+            <el-empty description="① 上传或选择左侧数据集 ② 点击「开始治理」启动流程" />
+          </template>
+          <template v-else>
+            <WorkflowGraph
+              :node-states="runStatus?.node_states ?? {}"
+              :status="runStatus?.status"
+              @node-click="onNodeClick"
+            />
+
+            <!-- 待审批：醒目提示，而非停滞进度条 -->
+            <div v-if="runStatus?.status === 'WAITING_APPROVAL'" class="approval-banner">
+              <el-icon :size="20"><Hourglass /></el-icon>
+              <div>
+                <div class="banner-title">任务等待人工审批</div>
+                <div class="banner-desc">高风险操作已暂停，请前往「审批中心」批准或拒绝后继续执行</div>
+              </div>
+              <el-button type="warning" size="small" @click="$router.push('/approval')">去审批</el-button>
+            </div>
+
+            <el-progress
+              v-else-if="runStatus && runStatus.status === 'RUNNING'"
+              :percentage="runStatus?.progress ?? 0"
+              class="progress-bar"
+            />
+
+            <!-- 结果摘要 + 查看完整报告 -->
+            <template v-if="outputs || issues.length || plan.length">
+              <el-divider content-position="left">治理结果</el-divider>
+              <div class="result-summary">
+                <div class="rs-item">
+                  <div class="rs-num">{{ issues.length }}</div>
+                  <div class="rs-label">发现的问题</div>
+                </div>
+                <div class="rs-item">
+                  <div class="rs-num">{{ plan.length }}</div>
+                  <div class="rs-label">清洗动作</div>
+                </div>
+                <div class="rs-item" v-if="validation">
+                  <div class="rs-num rs-score">{{ validation?.before_score?.toFixed?.(2) ?? validation?.before_score }} → {{ validation?.after_score?.toFixed?.(2) ?? validation?.after_score }}</div>
+                  <div class="rs-label">质量评分</div>
+                </div>
+                <div class="rs-item" v-if="outputs?.cleaned_exists">
+                  <a :href="`/api/dataset/${dataset.dataset_id}/cleaned.csv`" download>
+                    <el-button type="success" size="small">⬇ cleaned.csv</el-button>
+                  </a>
+                  <div class="rs-label">清洗后的新数据</div>
+                </div>
+                <div class="rs-item">
+                  <el-button v-if="outputs?.report" type="primary" size="small" @click="openReport">
+                    查看完整报告
+                  </el-button>
+                  <div class="rs-label" v-if="outputs?.report">全屏详情</div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="false"></template>
+          </template>
+        </el-card>
+      </el-col>
+
+      <!-- 右侧：追踪详情 -->
+      <el-col :span="8">
+        <el-card shadow="never" class="panel">
+          <template #header>追踪详情</template>
+          <el-empty v-if="!activeRunId" description="运行工作流后查看真实追踪" :image-size="60" />
+          <template v-else>
+            <div class="trace-section">
+              <div class="section-title">事件流</div>
+              <TracePanel :events="traceEvents" />
+            </div>
+            <el-divider />
+            <div class="section-title">Agent 详情</div>
+            <AgentDetail :run-id="activeRunId" :node-id="selectedNode" />
+          </template>
+        </el-card>
+      </el-col>
+    </el-row>
+
+    <!-- 治理报告弹窗 -->
+    <ReportDrawer
+      :open="reportDrawerOpen"
+      :outputs="outputs"
+      :run-id="activeRunId"
+      :dataset="dataset"
+      @close="closeReport"
+    />
+  </div>
+</template>
+
+<style scoped>
+.workflow-page {
+  max-width: 1500px;
+}
+.steps-card {
+  margin-bottom: 12px;
+}
+.panel {
+  margin-bottom: 12px;
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.run-id {
+  color: #909399;
+  font-size: 12px;
+}
+.current-node {
+  color: #409eff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.upload-name {
+  margin-bottom: 10px;
+}
+.dataset-info {
+  margin-top: 16px;
+}
+.start-btn {
+  margin-top: 16px;
+  width: 100%;
+}
+.progress-bar {
+  margin-top: 10px;
+}
+.approval-banner {  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #fdf6ec;
+  border: 1px solid #f5dab1;
+  border-radius: 8px;
+  color: #e6a23c;
+}
+.banner-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+.banner-desc {
+  font-size: 12px;
+  color: #b88230;
+  margin-top: 2px;
+}
+.score-block {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.score-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #606266;
+}
+.history-list {
+  max-height: 220px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.history-empty {
+  color: #c0c4cc;
+  font-size: 12px;
+  text-align: center;
+  padding: 8px 0;
+}
+.history-item {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 10px;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.history-item:hover {
+  background: #f5f7fa;
+}
+.history-item.active {
+  border-color: #409eff;
+  background: #ecf5ff;
+}
+.history-name {
+  color: #303133;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.history-meta {
+  color: #909399;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+.result-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+  margin-bottom: 4px;
+}
+.rs-item {
+  background: #fafafa;
+  border: 1px solid #ebeef5;
+  border-radius: 6px;
+  padding: 10px;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+}
+.rs-num {
+  font-size: 17px;
+  font-weight: 700;
+  color: #303133;
+}
+.rs-score {
+  font-size: 14px;
+}
+.rs-label {
+  font-size: 12px;
+  color: #909399;
+}
+.trace-section {
+  margin-bottom: 4px;
+}
+.section-title {
+  font-size: 13px;
+  color: #606266;
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.deliver-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.deliver-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 13px;
+}
+.deliver-label {
+  color: #606266;
+  min-width: 90px;
+}
+.deliver-val {
+  color: #909399;
+  font-family: monospace;
+  font-size: 12px;
+}
+.deliver-desc {
+  margin-top: 4px;
+}
+.dims {
+  margin-top: 10px;
+}
+.dim-title {
+  font-size: 12px;
+  color: #909399;
+  margin-bottom: 6px;
+  font-weight: 600;
+}
+.dim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.dim-name {
+  min-width: 60px;
+  font-size: 12px;
+  color: #606266;
+}
+.dim-bar {
+  flex: 1;
+}
+.dim-arrow {
+  color: #c0c4cc;
+}
+.execs {
+  margin-top: 10px;
+}
+.sample-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  line-height: 1.7;
+}
+.sample-before {
+  color: #f56c6c;
+  font-family: monospace;
+}
+.sample-after {
+  color: #67c23a;
+  font-family: monospace;
+}
+.sample-arrow {
+  color: #c0c4cc;
+}
+.sample-none {
+  color: #c0c4cc;
+}
+</style>
