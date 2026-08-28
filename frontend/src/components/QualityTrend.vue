@@ -1,13 +1,16 @@
 <script setup lang="ts">
-// 质量趋势弹窗：SVG 双折线（治理前灰虚线 → 治理后蓝实线）+ 明细表
+// 质量趋势弹窗：ECharts 折线（治理前灰虚线 → 治理后蓝实线渐变面积）+ 明细表
 // 数据自拉 GET /api/dashboard/stats 的 quality_trend（真实历史评分）
-import { computed, onMounted, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import * as echarts from 'echarts'
 
 const props = defineProps<{ open: boolean }>()
 const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
 
 const trend = ref<any[]>([])
 const loading = ref(false)
+const chartEl = ref<HTMLElement | null>(null)
+let chart: echarts.ECharts | null = null
 
 async function loadTrend() {
   if (!props.open) return
@@ -20,39 +23,107 @@ async function loadTrend() {
     trend.value = []
   } finally {
     loading.value = false
+    await nextTick()  // 等 v-if 渲染出 chartEl 容器
+    renderChart()
   }
 }
-watch(() => props.open, (v) => { if (v) loadTrend() })
-onMounted(loadTrend)
 
-// SVG points（viewBox 800x220，Y 轴 0-100 映射）
-function trendPoints(field: 'before_score' | 'after_score'): string {
+function renderChart() {
+  if (!chartEl.value) return
+  if (!chart) chart = echarts.init(chartEl.value)
   const list = trend.value
-  if (list.length < 2) return ''
-  const n = list.length
-  return list
-    .map((r: any, i: number) => {
-      const x = 40 + (i * 700) / (n - 1)
-      const y = 190 - (r[field] ?? 0) * 1.5
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    })
-    .join(' ')
+  if (list.length < 2) {
+    chart?.clear()
+    return
+  }
+  const names = list.map((r) => (r.dataset_name || '').slice(0, 8))
+  const before = list.map((r) => r.before_score)
+  const after = list.map((r) => r.after_score)
+  const minY = Math.floor(Math.min(...after, ...before) / 5) * 5 - 2
+  chart.setOption(
+    {
+      tooltip: {
+        trigger: 'axis',
+        formatter(params: any[]) {
+          const i = params[0]?.dataIndex ?? 0
+          const r = list[i]
+          const dt = (r.created_at || '').slice(0, 16).replace('T', ' ')
+          return `<b>${r.dataset_name}</b><br/>${dt}<br/>治理前：<span style="color:#c0c4cc">${r.before_score}</span> → 治理后：<span style="color:#409eff;font-weight:700">${r.after_score}</span>（▲ ${(r.after_score - r.before_score).toFixed(2)}）`
+        },
+      },
+      legend: { data: ['治理前', '治理后'], top: 0, textStyle: { fontSize: 13, color: '#606266' } },
+      grid: { left: 48, right: 20, top: 36, bottom: 28 },
+      xAxis: {
+        type: 'category',
+        data: names,
+        axisLabel: { fontSize: 12, color: '#606266', interval: 0, rotate: 30 },
+        axisLine: { lineStyle: { color: '#dcdfe6' } },
+      },
+      yAxis: {
+        type: 'value',
+        min: minY,
+        max: 100,
+        axisLabel: { fontSize: 13, color: '#606266', fontWeight: 600 },
+        splitLine: { lineStyle: { color: '#f0f2f5' } },
+      },
+      series: [
+        {
+          name: '治理前',
+          type: 'line',
+          data: before,
+          symbol: 'circle',
+          symbolSize: 7,
+          lineStyle: { width: 2, type: 'dashed', color: '#c0c4cc' },
+          itemStyle: { color: '#c0c4cc' },
+        },
+        {
+          name: '治理后',
+          type: 'line',
+          data: after,
+          symbol: 'circle',
+          symbolSize: 8,
+          lineStyle: { width: 3, color: '#409eff' },
+          itemStyle: { color: '#409eff' },
+          areaStyle: {
+            color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+              { offset: 0, color: 'rgba(64,158,255,0.35)' },
+              { offset: 1, color: 'rgba(64,158,255,0.03)' },
+            ]),
+          },
+          label: {
+            show: true,
+            position: 'top',
+            formatter: (p: any) => `${p.data}`,
+            fontSize: 12,
+            fontWeight: 700,
+            color: '#409eff',
+            distance: 6,
+          },
+        },
+      ],
+    },
+    true,
+  )
+  chart.resize()
 }
-const trendXLabels = computed(() =>
-  trend.value.map((r: any, i: number, arr: any[]) => {
-    const label = (r.dataset_name || '').slice(0, 8)
-    const x = 40 + (i * 700) / Math.max(arr.length - 1, 1)
-    return { label, x: x.toFixed(1) }
-  }),
-)
-const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.length - 1].after_score : null))
+
+watch(() => props.open, (v) => { if (v) { loadTrend(); setTimeout(() => chart?.resize(), 250) } })
+watch(trend, async () => { await nextTick(); renderChart() })
+onMounted(loadTrend)
+onBeforeUnmount(() => { chart?.dispose(); chart = null })
+
+function onResize() {
+  chart?.resize()
+}
+window.addEventListener('resize', onResize)
+onBeforeUnmount(() => window.removeEventListener('resize', onResize))
 </script>
 
 <template>
   <el-dialog
     :model-value="props.open"
     @update:model-value="(v: boolean) => emit('update:open', v)"
-    width="70%"
+    width="72%"
     align-center
     class="quality-trend-dialog"
   >
@@ -61,26 +132,7 @@ const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.l
     </template>
     <div v-loading="loading">
       <template v-if="trend.length >= 2">
-        <svg viewBox="0 0 800 220" class="trend-svg" preserveAspectRatio="xMidYMid meet">
-          <!-- Y 轴网格（50/75/100） -->
-          <line x1="40" y1="115" x2="750" y2="115" stroke="#f0f2f5" stroke-width="1" />
-          <line x1="40" y1="77.5" x2="750" y2="77.5" stroke="#f0f2f5" stroke-width="1" />
-          <line x1="40" y1="40" x2="750" y2="40" stroke="#f0f2f5" stroke-width="1" />
-          <text x="8" y="118" class="axis">50</text>
-          <text x="8" y="80.5" class="axis">75</text>
-          <text x="8" y="43" class="axis">100</text>
-          <!-- before（灰虚线） / after（蓝实线） -->
-          <polyline :points="trendPoints('before_score')" fill="none" stroke="#c0c4cc" stroke-width="2" stroke-dasharray="5,4" />
-          <polyline :points="trendPoints('after_score')" fill="none" stroke="#409eff" stroke-width="2.5" />
-          <!-- 末端 after 分数标注 -->
-          <text v-if="lastScore != null" :x="750" :y="190 - lastScore * 1.5 - 6" text-anchor="end" class="score-end">{{ lastScore }}</text>
-          <!-- 底部数据集短名 -->
-          <text v-for="(l, i) in trendXLabels" :key="i" :x="l.x" y="210" text-anchor="middle" class="axis-label">{{ l.label }}</text>
-        </svg>
-        <div class="trend-legend">
-          <span class="lg lg-before">治理前</span>
-          <span class="lg lg-after">治理后</span>
-        </div>
+        <div ref="chartEl" class="trend-chart" />
         <el-table :data="trend" size="small" max-height="300" class="trend-table">
           <el-table-column label="数据集" prop="dataset_name" show-overflow-tooltip />
           <el-table-column label="治理时间" width="160">
@@ -108,50 +160,12 @@ const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.l
   font-weight: 700;
   color: #303133;
 }
-.trend-svg {
+.trend-chart {
   width: 100%;
-  height: 210px;
-  display: block;
-}
-.trend-svg .axis {
-  font-size: 13px;
-  fill: #606266;
-  font-weight: 600;
-}
-.trend-svg .axis-label {
-  font-size: 12px;
-  fill: #606266;
-}
-.trend-svg .score-end {
-  font-size: 15px;
-  font-weight: 700;
-  fill: #409eff;
-}
-.trend-legend {
-  display: flex;
-  gap: 16px;
-  margin: 8px 0 12px;
-  font-size: 13px;
-  color: #303133;
-}
-.trend-legend .lg::before {
-  content: '';
-  display: inline-block;
-  width: 22px;
-  height: 3px;
-  vertical-align: middle;
-  margin-right: 6px;
-}
-.lg-before::before {
-  background: #c0c4cc;
-  background-image: linear-gradient(90deg, #c0c4cc 50%, transparent 50%);
-  background-size: 8px 3px;
-}
-.lg-after::before {
-  background: #409eff;
+  height: 320px;
 }
 .trend-table {
-  margin-top: 4px;
+  margin-top: 6px;
 }
 .up-score {
   color: #67c23a;

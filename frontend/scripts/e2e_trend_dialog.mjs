@@ -26,9 +26,9 @@ const dlg = page.locator('.quality-trend-dialog')
 console.log('弹窗打开:', await dlg.count() === 1)
 const dlgBody = await dlg.innerText()
 console.log('弹窗标题:', dlgBody.includes('质量趋势'))
-console.log('SVG 折线:', (await dlg.locator('svg polyline').count()) >= 2)
+console.log('ECharts canvas:', (await dlg.locator('.trend-chart canvas').count()) >= 1)
 console.log('明细表含治理前/后:', dlgBody.includes('治理前') && dlgBody.includes('治理后'))
-if ((await dlg.locator('svg polyline').count()) < 2) throw new Error('折线未渲染')
+if ((await dlg.locator('.trend-chart canvas').count()) < 1) throw new Error('ECharts 未渲染')
 
 // 4) 关闭弹窗
 await page.keyboard.press('Escape')
