@@ -224,6 +224,24 @@ function closeReport() {
   store.reportDrawerOpen = false
 }
 
+// 导出治理报告（HTML / PDF）——工作台结果区
+async function exportReport(fmt: 'pdf' | 'html') {
+  if (!activeRunId.value) return
+  const resp = await fetch(`/api/report/${activeRunId.value}/${fmt}`)
+  if (!resp.ok) {
+    ElMessage.error(fmt === 'pdf' ? 'PDF 导出失败（请确认本机已安装 Edge 浏览器）' : 'HTML 导出失败')
+    return
+  }
+  const blob = await resp.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `治理报告.${fmt}`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`已导出 ${fmt.toUpperCase()} 报告`)
+}
+
 // 抽屉打开时若报告数据未就绪（如刷新后），自动重新拉取一次
 watch(reportDrawerOpen, (open) => {
   if (open && store.activeRunId && !outputs.value?.report) {
@@ -276,12 +294,19 @@ const steps = [
 // ---- 恢复（页面切换/刷新后继续跟踪到终态）----
 
 // 从数据源注册跳转而来（query.dataset 携带新数据集 id）：
-// 响应式监听（immediate 覆盖首次挂载，watch 覆盖组件复用时的 query 变化），
+// 响应式监听（immediate 覆盖首次挂载，watch 覆盖组件复用时的 query 变化）：
 // 自动选中新数据集并清空旧运行状态（resetRun 统一清空含 outputs），避免旧检测信息残留。
+// 注意：datasets 尚未加载时（immediate 于 mount 前触发）只记录目标 dataset_id，
+// 实际切换交给 onMounted 统一恢复，避免清掉 query 后无法回填 run。
 watch(
   () => route.query.dataset,
   (freshDsId) => {
     if (!freshDsId) return
+    if (!datasets.value.length) {
+      // 数据集列表未就绪：仅记录目标，等待 onMounted 统一恢复
+      store.setActiveDataset(String(freshDsId))
+      return
+    }
     const d = datasets.value.find((x: any) => x.dataset_id === freshDsId)
     if (d) store.dataset = d
     store.setActiveDataset(String(freshDsId))
@@ -296,10 +321,33 @@ watch(
 
 onMounted(async () => {
   await loadDatasets()
-  // 先恢复数据集信息（loadResults 依赖 store.dataset 拉取 outputs）
-  if (!store.dataset && store.activeDatasetId) {
+  // 恢复数据集信息（loadResults 依赖 store.dataset 拉取 outputs）
+  if (route.query.dataset) {
+    // query 直达：watch 可能因列表未加载而未处理，这里补全切换
+    const q = String(route.query.dataset)
+    const d = datasets.value.find((x: any) => x.dataset_id === q)
+    if (d) store.dataset = d
+    store.setActiveDataset(q)
+    store.activeRunId = ''
+    store.resetRun()
+    stopPoll()
+    router.replace({ path: '/workflow' })
+  } else if (!store.dataset && store.activeDatasetId) {
     const d = datasets.value.find((x: any) => x.dataset_id === store.activeDatasetId)
     if (d) store.dataset = d
+  }
+  // 恢复运行：无 activeRunId 时回填该数据集最近一次运行
+  if (!store.activeRunId && store.activeDatasetId) {
+    try {
+      const resp = await fetch(`/api/dataset/${store.activeDatasetId}/latest-run`)
+      const lr = await resp.json()
+      if (lr.run_id) {
+        store.activeRunId = lr.run_id
+        if (lr.status) store.runStatus = { status: lr.status, node_states: store.runStatus?.node_states ?? {} }
+      }
+    } catch {
+      /* 静默 */
+    }
   }
   if (store.activeRunId) {
     // 恢复运行：立即拉一次，然后持续轮询直到终态；同时加载当前可见数据
@@ -486,6 +534,10 @@ onUnmounted(stopPoll)
                     查看完整报告
                   </el-button>
                   <div class="rs-label" v-if="outputs?.report">全屏详情</div>
+                </div>
+                <div class="rs-item" v-if="['SUCCESS', 'FAILED'].includes(runStatus?.status)">
+                  <el-button type="warning" size="small" @click="exportReport('pdf')">导出 PDF</el-button>
+                  <div class="rs-label">治理报告</div>
                 </div>
               </div>
             </template>

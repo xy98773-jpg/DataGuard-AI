@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
-from app.api import approval, dashboard, database, dataset, trace, web, workflow
+from app.api import approval, dashboard, database, dataset, report, trace, web, workflow
 from app.config import settings
 from app.logging_config import setup_logging
 from app.storage.database import init_db
@@ -43,7 +43,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-for router in (dataset.router, workflow.router, trace.router, approval.router, database.router, web.router, dashboard.router):
+for router in (dataset.router, workflow.router, trace.router, approval.router, database.router, web.router, dashboard.router, report.router):
     app.include_router(router, prefix=settings.api_prefix)
 
 

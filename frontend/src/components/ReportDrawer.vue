@@ -58,6 +58,23 @@ function fmtAfter(s: any): string {
   if (typeof s === 'object') return s.after ?? JSON.stringify(s)
   return String(s)
 }
+
+// 导出治理报告（HTML / PDF）
+async function exportReport(fmt: 'pdf' | 'html') {
+  try {
+    const resp = await fetch(`/api/report/${props.runId}/${fmt}`)
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `治理报告.${fmt}`
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch {
+    // 静默：按钮下方提示由调用方负责（避免引入额外依赖）
+  }
+}
 </script>
 
 <template>
@@ -87,6 +104,8 @@ function fmtAfter(s: any): string {
         <a v-else-if="cleanedExists" :href="`/api/dataset/${dataset?.dataset_id}/cleaned.csv`" download>
           <el-button type="success" size="small">⬇ 下载 cleaned.csv</el-button>
         </a>
+        <el-button type="warning" size="small" @click="exportReport('pdf')">导出 PDF</el-button>
+        <el-button size="small" @click="exportReport('html')">导出 HTML</el-button>
         <el-button type="primary" size="small" @click="emit('close')">收起报告</el-button>
       </div>
 

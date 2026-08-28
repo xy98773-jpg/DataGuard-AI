@@ -44,6 +44,17 @@ def get_dashboard_stats() -> dict:
         "success_rate": round(succeeded / total_runs * 100, 1) if total_runs else 0.0,
         "issues_found": issues_found,
         "datasets": datasets,
+        "quality_trend": [
+            {
+                "run_id": run.id,
+                "dataset_name": ds.name or ds.filename,
+                "created_at": run.created_at.isoformat() if run.created_at else "",
+                "before_score": round(val.before_score, 2) if val else None,
+                "after_score": round(val.after_score, 2) if val else None,
+            }
+            for run, ds, val in recent
+            if val and val.before_score and val.after_score
+        ],
         "recent_runs": [
             {
                 "run_id": run.id,

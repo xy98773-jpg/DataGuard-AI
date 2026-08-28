@@ -1,47 +1,56 @@
+// e2e_report.mjs — 实测：工作台导出 PDF/HTML 下载 + Dashboard 质量趋势渲染
 import { chromium } from 'playwright-core'
 
-// 用已知有报告数据的 run 恢复前端状态（ds_c9d46a3dff / run_e63c8ed9d6 已 SUCCESS）
-const DS = process.env.DS || 'ds_c9d46a3dff'
-const RUN = process.env.RUN || 'run_e63c8ed9d6'
+const FE = 'http://localhost:5173'
+const BE = 'http://127.0.0.1:8000'
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true })
-const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
-page.on('console', (msg) => console.log('[console]', msg.type(), msg.text()))
-page.on('pageerror', (err) => console.log('[pageerror]', err.message))
+const page = await browser.newPage({ acceptDownloads: true })
 
-await page.addInitScript(({ ds, run }) => {
-  localStorage.setItem('dg-active-run', JSON.stringify({ datasetId: ds, runId: run }))
-}, { ds: DS, run: RUN })
+// 1) Dashboard 质量趋势渲染
+await page.goto(`${FE}/dashboard`, { waitUntil: 'domcontentloaded' })
+await page.waitForTimeout(3500)
+const body = await page.locator('body').innerText()
+console.log('趋势卡片:', body.includes('质量趋势'))
+console.log('SVG 折线:', (await page.locator('.trend-svg polyline').count()) >= 1)
+if (!body.includes('质量趋势')) throw new Error('趋势卡片未渲染')
 
-await page.goto('http://localhost:5173/workflow', { waitUntil: 'networkidle', timeout: 30000 }).catch((e) => console.log('[goto]', e.message))
+// 2) 找一个 SUCCESS run 直接打开工作台（query 定位数据集 → 自动恢复 run）
+const stats = await (await fetch(`${BE}/api/dashboard/stats`)).json()
+const done = stats.quality_trend[0]  // 最近一次有评分的治理
+const runInfo = await (await fetch(`${BE}/api/workflow/${done.run_id}`)).json()
+console.log('目标 run:', done.run_id, 'ds:', runInfo.dataset_id)
+await page.goto(`${FE}/workflow?dataset=${runInfo.dataset_id}`, { waitUntil: 'domcontentloaded' })
+await page.waitForTimeout(4000)
 
-// 等待按钮出现（loadResults 拉取 outputs 后）
-let btnCount = 0
-for (let i = 0; i < 20; i++) {
-  btnCount = await page.locator('text=查看完整报告').count()
-  if (btnCount > 0) break
-  await page.waitForTimeout(1000)
-}
-console.log('查看完整报告 按钮数量:', btnCount)
-const dlCount = await page.locator('text=下载 cleaned.csv').count()
-console.log('下载按钮数量:', dlCount)
+// 3) 导出 PDF（结果区「导出 PDF」按钮 → 触发下载）
+const pdfBtn = page.locator('button', { hasText: '导出 PDF' }).first()
+console.log('导出PDF按钮数:', await pdfBtn.count())
+const [pdfDl] = await Promise.all([
+  page.waitForEvent('download', { timeout: 60000 }),
+  pdfBtn.click(),
+])
+const pdfPath = await pdfDl.path()
+console.log('PDF 下载成功:', !!pdfPath)
 
-if (btnCount > 0) {
-  console.log('--- 点击查看完整报告 ---')
-  await page.locator('text=查看完整报告').first().click()
-  await page.waitForTimeout(1500)
-  const dialogCount = await page.locator('.el-dialog').count()
-  const overlayCount = await page.locator('.el-overlay').count()
-  const reportTitle = await page.locator('.el-dialog__header').count()
-  console.log('el-dialog 数量:', dialogCount, '| overlay 数量:', overlayCount, '| dialog header:', reportTitle)
-  const headerText = (await page.locator('.el-dialog__header').first().textContent().catch(() => '')) || ''
-  console.log('dialog header 文本:', headerText.slice(0, 80))
-  // 展开检查：dialog 是否可见
-  const visible = await page.locator('.el-dialog').first().isVisible().catch(() => false)
-  console.log('dialog visible:', visible)
-  // 检查 body 是否有报错痕迹（Vue 错误会挂载到 body）
-  const errText = await page.locator('body').textContent().catch(() => '')
-  console.log('body 包含 VUE ERROR:', errText.includes('Vue') && errText.includes('error'))
-}
+// 4) 打开报告弹窗 → 弹窗内导出 HTML + PDF
+await page.locator('button', { hasText: '查看完整报告' }).first().click()
+await page.waitForTimeout(1500)
+const dlgHtml = page.locator('.report-dialog button', { hasText: '导出 HTML' }).first()
+const dlgPdf = page.locator('.report-dialog button', { hasText: '导出 PDF' }).first()
+console.log('弹窗导出HTML按钮:', await dlgHtml.count(), '| 弹窗导出PDF按钮:', await dlgPdf.count())
+const [htmlDl] = await Promise.all([
+  page.waitForEvent('download', { timeout: 30000 }),
+  dlgHtml.click(),
+])
+const htmlPath = await htmlDl.path()
+console.log('HTML 下载成功:', !!htmlPath)
+const [dlgPdfDl] = await Promise.all([
+  page.waitForEvent('download', { timeout: 60000 }),
+  dlgPdf.click(),
+])
+const dlgPdfPath = await dlgPdfDl.path()
+console.log('弹窗 PDF 下载成功:', !!dlgPdfPath)
 
 await browser.close()
+console.log('E2E REPORT PASS')

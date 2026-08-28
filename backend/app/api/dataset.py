@@ -45,6 +45,21 @@ def get_outputs(dataset_id: str) -> dict:
     return result
 
 
+@router.get("/dataset/{dataset_id}/latest-run")
+def get_latest_run(dataset_id: str) -> dict:
+    """返回该数据集最近一次治理运行（前端恢复工作台用）。"""
+    with SessionLocal() as session:
+        run = (
+            session.query(WorkflowRun)
+            .filter(WorkflowRun.dataset_id == dataset_id)
+            .order_by(WorkflowRun.created_at.desc())
+            .first()
+        )
+    if not run:
+        return {"dataset_id": dataset_id, "run_id": "", "status": ""}
+    return {"dataset_id": dataset_id, "run_id": run.id, "status": run.status}
+
+
 @router.get("/dataset/{dataset_id}/cleaned.csv")
 def download_cleaned(dataset_id: str) -> Response:
     """下载清洗后的新数据（最终交付物）."""
