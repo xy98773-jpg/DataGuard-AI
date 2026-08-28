@@ -27,7 +27,11 @@ const router = createRouter({
     {
       path: '/datasource',
       name: 'datasource',
-      component: () => import('../views/DataSource.vue'),
+      component: () => import('../views/DataSource.vue'),    },
+    {
+      path: '/settings',
+      name: 'settings',
+      component: () => import('../views/Settings.vue'),
     },
   ],
 })

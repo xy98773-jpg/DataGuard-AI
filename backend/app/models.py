@@ -125,3 +125,22 @@ class Approval(Base):
     status: Mapped[str] = mapped_column(String, default="PENDING")  # PENDING/APPROVED/REJECTED
     operator: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class LLMSetting(Base):
+    """LLM 运行时配置（UI 可视化配置，热生效；未配置时回退 .env 默认）。
+
+    单行记录（id="default"）：页面保存后立即生效，无需重启后端。
+    api_key 只存明文于本地业务库，接口返回时一律脱敏。
+    """
+
+    __tablename__ = "llm_settings"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default="default")
+    provider: Mapped[str] = mapped_column(String, default="openai_compatible")
+    model: Mapped[str] = mapped_column(String, default="")
+    api_key: Mapped[str] = mapped_column(String, default="")
+    base_url: Mapped[str] = mapped_column(String, default="")
+    temperature: Mapped[float] = mapped_column(Float, default=0.0)
+    max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

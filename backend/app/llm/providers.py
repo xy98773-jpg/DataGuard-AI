@@ -16,18 +16,21 @@ from langchain_openai import ChatOpenAI
 
 from app.config import settings
 from app.llm.client import LLMClient, LLMUsage, _serialize_context
+from app.services.llm_settings import get_llm_config
 
 _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 
 
 class OpenAICompatibleClient(LLMClient):
     def __init__(self) -> None:
+        # 每次构造读取最新运行时配置（DB llm_settings 优先，回退 .env）→ 页面改配置即热生效
+        cfg = get_llm_config()
         self._llm = ChatOpenAI(
-            model=settings.llm_model,
-            base_url=settings.llm_base_url or None,
-            api_key=settings.llm_api_key or "not-needed",
-            temperature=settings.llm_temperature,
-            max_tokens=settings.llm_max_tokens,
+            model=cfg.get("model") or settings.llm_model,
+            base_url=(cfg.get("base_url") or settings.llm_base_url) or None,
+            api_key=(cfg.get("api_key") or settings.llm_api_key) or "not-needed",
+            temperature=cfg.get("temperature", settings.llm_temperature),
+            max_tokens=cfg.get("max_tokens", settings.llm_max_tokens),
             max_retries=0,  # retries handled here with JSON parsing
         )
 

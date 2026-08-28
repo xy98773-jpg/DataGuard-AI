@@ -1,9 +1,22 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)
+
+// 当前生效模型（模型设置页保存后自动刷新）
+const currentModel = ref('')
+async function loadModel() {
+  try {
+    const resp = await fetch('/api/settings/llm')
+    const d = await resp.json()
+    currentModel.value = d.model ?? ''
+  } catch {
+    currentModel.value = ''
+  }
+}
+onMounted(loadModel)
 </script>
 
 <template>
@@ -34,12 +47,19 @@ const activeMenu = computed(() => route.path)
           <el-icon><Connection /></el-icon>
           <span>数据源</span>
         </el-menu-item>
+        <el-menu-item index="/settings">
+          <el-icon><Setting /></el-icon>
+          <span>模型设置</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 
     <el-container>
       <el-header class="app-header">
         <span class="app-header-title">企业数据治理 Agent 平台</span>
+        <span v-if="currentModel" class="app-model-tag">
+          <el-icon><Cpu /></el-icon>&nbsp;当前模型：{{ currentModel }}
+        </span>
       </el-header>
       <el-main class="app-main">
         <router-view />
@@ -84,10 +104,21 @@ const activeMenu = computed(() => route.path)
   border-bottom: 1px solid #e4e7ed;
   display: flex;
   align-items: center;
+  justify-content: space-between;
 }
 .app-header-title {
   color: #606266;
   font-size: 14px;
+}
+.app-model-tag {
+  display: inline-flex;
+  align-items: center;
+  font-size: 12px;
+  color: #409eff;
+  background: #ecf5ff;
+  border: 1px solid #d9ecff;
+  border-radius: 12px;
+  padding: 2px 10px;
 }
 .app-main {
   padding: 16px;
