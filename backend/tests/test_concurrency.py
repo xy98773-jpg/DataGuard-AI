@@ -56,20 +56,44 @@ def test_cancel_nonexistent(auth_headers):
 
 
 def test_cancel_and_verify_status(auth_headers):
-    """上传 -> 启动 -> 取消 -> 验证状态."""
+    """上传 -> 启动（到 WAITING_APPROVAL 产生 issues）-> 取消 -> 中间数据清理."""
     ds_id = _create_test_dataset()
     resp = client.post("/api/workflow/start", json={"dataset_id": ds_id}, headers=auth_headers)
     assert resp.status_code == 200
     run_id = resp.json()["run_id"]
 
-    # 立即取消
+    # 等待 run 进入 WAITING_APPROVAL（此时已 persist issues/plan 到数据库）
+    for _ in range(40):
+        st = client.get(f"/api/workflow/{run_id}", headers=auth_headers).json()
+        if st.get("status") in ("WAITING_APPROVAL", "SUCCESS", "FAILED"):
+            break
+        import time
+
+        time.sleep(0.2)
+
+    # 若已产生 issues，取消后应被清理
+    issues_before = client.get(f"/api/issues/{run_id}", headers=auth_headers).json().get("issues", [])
+    has_data = len(issues_before) > 0
+
+    # 取消
     resp = client.post(f"/api/workflow/{run_id}/cancel", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["status"] == "cancelled"
 
+    # 取消后：该 run 的 issues/plan 应被级联清理
+    issues_after = client.get(f"/api/issues/{run_id}", headers=auth_headers).json().get("issues", [])
+    assert issues_after == [], "取消后 issues 应被清理"
+    plan_after = client.get(f"/api/plan/{run_id}", headers=auth_headers).json().get("actions", [])
+    assert plan_after == [], "取消后 plan 应被清理"
+
     # 检查运行列表（取消操作会从活跃集合移除）
     active_resp = client.get("/api/workflow/active", headers=auth_headers)
     assert not any(r["run_id"] == run_id for r in active_resp.json()["runs"])
+
+    # 若取消前有数据，则跨 run 问题列表也不应再包含该 run 的问题
+    if has_data:
+        all_issues = client.get(f"/api/issues?dataset_id={ds_id}", headers=auth_headers).json().get("issues", [])
+        assert not any(i["run_id"] == run_id for i in all_issues), "取消后问题列表不应残留"
 
 
 def test_concurrency_limit_rejects(auth_headers):

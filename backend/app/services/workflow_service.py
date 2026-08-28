@@ -15,6 +15,7 @@ from app.models import (
     CleaningPlan as CleaningPlanRow,
     Execution as ExecutionRow,
     Issue as IssueRow,
+    TraceEvent,
     Validation as ValidationRow,
     WorkflowRun,
 )
@@ -87,6 +88,10 @@ class WorkflowService:
         - PENDING：直接标记为 CANCELLED（线程还未真正开始）
         - WAITING_APPROVAL：标记为 CANCELLED（审批队列不再处理）
         - RUNNING：设置取消标记，线程在下一个节点检查时退出
+
+        取消时**级联清理该 run 已产生的全部中间数据**（issues/plan/executions/
+        validations/approvals/trace），避免取消后首页统计与问题列表残留脏数据；
+        仅保留 workflow_runs 记录本身（状态 CANCELLED 作为审计痕迹）。
         """
         with SessionLocal() as session:
             row = session.get(WorkflowRun, run_id)
@@ -94,6 +99,14 @@ class WorkflowService:
                 return False
             if row.status in ("SUCCESS", "FAILED", "CANCELLED"):
                 return False  # 已终态，不可取消
+
+            # 清理该 run 产生的中间数据（防止取消后污染首页统计/问题列表）
+            session.query(IssueRow).filter(IssueRow.run_id == run_id).delete()
+            session.query(CleaningPlanRow).filter(CleaningPlanRow.run_id == run_id).delete()
+            session.query(ExecutionRow).filter(ExecutionRow.run_id == run_id).delete()
+            session.query(ValidationRow).filter(ValidationRow.run_id == run_id).delete()
+            session.query(ApprovalRow).filter(ApprovalRow.run_id == run_id).delete()
+            session.query(TraceEvent).filter(TraceEvent.run_id == run_id).delete()
 
             row.status = "CANCELLED"
             session.commit()
@@ -105,7 +118,7 @@ class WorkflowService:
             with _active_runs_lock:
                 _active_runs.discard(run_id)
 
-            logger.info("任务已取消: {}", run_id)
+            logger.info("任务已取消并清理中间数据: {}", run_id)
             return True
 
     def get_active_runs(self) -> list[dict]:
