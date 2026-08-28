@@ -41,6 +41,9 @@ APPROVAL_ZH = {"APPROVED": "已批准", "REJECTED": "已拒绝", "PENDING": "待
 EDGE_CANDIDATES = [
     r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
     r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+    "/usr/bin/chromium",  # Docker 容器（Debian slim 安装的 chromium）
+    "/usr/bin/chromium-browser",
+    "/usr/bin/google-chrome",
 ]
 
 
@@ -362,7 +365,7 @@ def render_pdf(html: str) -> bytes:
             f.write(html)
         url = "file:///" + html_path.replace("\\", "/")
         result = subprocess.run(
-            [edge, "--headless", "--disable-gpu", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", url],
+            [edge, "--headless", "--disable-gpu", "--no-sandbox", "--no-pdf-header-footer", f"--print-to-pdf={pdf_path}", url],
             capture_output=True,
             timeout=90,
         )

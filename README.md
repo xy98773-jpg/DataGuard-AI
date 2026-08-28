@@ -233,6 +233,56 @@ cd backend
 .venv\Scripts\python.exe -m pytest tests/ -v
 ```
 
+## Docker 一键部署（推荐）
+
+不需要安装 Python/Node，只要机器上有 Docker，3 条命令即可跑起来（前后端 + 可选 MySQL 全自动编排）。
+
+```bash
+# 1. 填 LLM Key（没有则复制模板）
+cp backend/.env.example backend/.env   # 然后编辑 backend/.env 填入 DG_LLM_API_KEY 等
+
+# 2. 构建并启动（backend + frontend）
+docker compose up -d --build
+
+# 3. 打开浏览器
+#    前端：http://localhost:8080
+#    后端直连（可选调试）：http://localhost:8010/api/health
+```
+
+### 常用操作
+
+| 命令 | 作用 |
+|---|---|
+| `docker compose up -d --build` | 首次构建并启动 |
+| `docker compose up -d` | 后续快速启动 |
+| `docker compose --profile db up -d` | 需要**数据库源**时额外启动 MySQL（端口 3307，独立卷） |
+| `docker compose down` | 停止（**数据保留**在 `docker-storage/`） |
+| `docker compose down -v` | 停止并清空容器数据（慎用） |
+
+### 特性与隔离说明
+
+- **数据持久化**：业务数据（app.db / checkpoints / datasets / outputs）写入仓库根目录 `docker-storage/`（独立于本地开发用的 `storage/`），重启/重建容器不丢
+- **LLM Key**：通过 `backend/.env` 注入（不进镜像）；也可在页面「模型设置」里配置并保存（存 `llm_settings` 表，随卷持久化）
+- **与本地开发共存**：部署版前端 `8080`、后端直连 `8010`、MySQL `3307`，与本机开发环境（5173/8000/3306）互不干扰；容器命名 `dgai-*` 前缀，不碰其他 Docker 项目
+- **PDF 报告导出**：容器内置 chromium（后端自动探测：Windows 用系统 Edge，容器用 chromium），功能与本地一致
+- **数据安全**：容器以非 root 用户运行
+
+### 数据库源（可选）
+
+```bash
+docker compose --profile db up -d     # 启动 MySQL（root/root123，库 dataguard，端口 3307）
+```
+
+在「数据源」页注册数据库时填 `127.0.0.1:3307` 即可。停止时 `docker compose down` 会保留 MySQL 数据卷。
+
+### 云服务器部署（选读）
+
+1. 购买轻量云服务器（1核2G 足够；国内需备案域名，可先用 IP）
+2. SSH 登录后安装 Docker（`curl -fsSL https://get.docker.com | sh`）
+3. `git clone git@github.com:xy98773-jpg/DataGuard-AI.git && cd DataGuard-AI`
+4. 填 `backend/.env` → `docker compose up -d --build`
+5. 云控制台放行 **8080** 端口 → 浏览器访问 `http://服务器IP:8080`
+
 ## 目录结构
 
 ```

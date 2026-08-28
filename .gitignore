@@ -37,3 +37,6 @@ Thumbs.db
 *.log
 backend/_*.json
 backend/_*.txt
+
+# ========== Docker ==========
+docker-storage/

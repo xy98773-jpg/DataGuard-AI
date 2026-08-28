@@ -1,0 +1,16 @@
+# 后端构建上下文排除（镜像保持干净）
+.venv/
+__pycache__/
+*.pyc
+storage/
+tests/
+.env
+.env.*
+!.env.example
+datasets/
+scripts/
+*.db
+*.db-shm
+*.db-wal
+logs/
+.pytest_cache/
