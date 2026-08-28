@@ -130,7 +130,11 @@ START → supervisor -(route)→ profiler → inspector → planner → plan_val
 
 ## 界面与交互（中文版）
 
-治理工作台三栏布局：左＝数据集（上传/信息/质量分/历史）、中＝工作流图谱 + 治理结果摘要（问题数/清洗动作/质量分/下载/「查看完整报告」按钮）、右＝追踪详情（可展开的实时 Trace + Agent 详情）。
+**治理工作台三栏布局**：左＝数据集（上传/信息/质量分/历史）、中＝工作流图谱 + 治理结果摘要（问题数/清洗动作/质量分/下载/「查看完整报告」按钮）、右＝追踪详情（可展开的实时 Trace + Agent 详情 + **Token 消耗统计**）。
+
+**Dashboard 首页**：Hero + 4 张平台统计卡片（运行总数 / 治理成功率 / 发现问题数 / 数据集数）+ 最近运行表（数据集名/类型/状态标签/质量评分/重规划次数/时间，点击行跳转工作台）——数据来自 `GET /api/dashboard/stats`（真实业务库聚合）。
+
+**Re-plan / Reflection 可视化**：图谱含 10 个节点 12 条边——`validator →(失败) reflection →(重规划) planner` 虚线路由动态显示；反思节点（`reflection`）执行后标绿，Dashboard 重规划次数列展示 `iteration`。
 
 **治理报告弹窗**：点击「查看完整报告」打开**居中 2/3 画布**（el-dialog 72% 宽、垂直居中，两侧仍可见原界面），全宽展示 4 大区块——发现的问题（编号/类型双语/列/严重度/置信度/影响行数/证据样例）、清洗计划（工具/列/风险/对应问题）、清洗动作明细（含 before→after 样例对比）、质量维度对比（完整性/唯一性/格式合规双进度条）。顶部含 cleaned.csv 下载入口与概要统计。关闭三入口：标题栏「收起报告」按钮 / 右上角 X / ESC / 点击遮罩；打开状态保存在 Pinia store，切换页面再返回保持打开且内容不丢（数据源为 `GET /api/dataset/{id}/outputs`）。
 
@@ -158,12 +162,13 @@ Demo 验证：上传 customer.csv → 工作流停在 approval（delete_duplicat
 - **DatabaseConnector 统一接口**：MySQL（pymysql）/ PostgreSQL（psycopg）——`test_connection / list_tables / get_schema / sample_rows / preview_sql`
 - **SQL 防火墙（默认 READ ONLY）**：拒绝 DROP/TRUNCATE/DELETE/ALTER/INSERT/UPDATE 等写语句与不安全标识符；Agent 无法执行写 SQL
 - **数据库数据集注册**：`POST /api/database/register` 将表注册为虚拟数据集（source_type=database）
-- **数据库治理流程**：Supervisor 路由 database → Profiler 从 MySQL 拉数据分析 → Inspector → Planner → Risk → 审批 → Execution（**数据库源强制 DRY_RUN，绝不写回生产表**）→ Validator
+- **数据库治理流程**：Supervisor 路由 database → Profiler 从 MySQL 拉数据分析 → Inspector → Planner → Risk → 审批 → Execution → Validator
+- **Shadow Table 写回（Phase 5 深化）**：审批通过后清洗结果写入**影子表** `{表名}_agent_{run短码}`（事务内 DROP+重建，幂等），**生产表永不改动**；Validator 从影子表读回做质量对比；前端工作台/报告弹窗展示「已写入影子表 xxx（N 行，生产表未改动）」
 - **Database Source API**：`/api/database/test`、`/tables`、`/schema`、`/preview`、`/register`
 - **前端 DataSource 页 Database 入口**：连接表单 → Test Connection → List Tables → Preview → 注册 → 跳转治理
-- **Demo**：`docker compose`/`docker run dg-mysql` + `scripts/init_mysql_demo.py` 建 504 行 `dataguard_test.customer`；端到端验证：注册 → 治理 → 审批 → SUCCESS
+- **Demo**：`docker compose`/`docker run dg-mysql` + `scripts/init_mysql_demo.py` 建 504 行 `dataguard_test.customer`；端到端验证：注册 → 治理 → 审批 → 写影子表（500 行，生产表 504 行不变）→ SUCCESS
 
-> 生产写流程（Shadow Table / Transaction）为设计规范，Phase 5 保持 READ ONLY + Preview；实际写回在真实企业环境按 Plan → Risk → Approval → Transaction 启用。
+> 安全边界：影子表写回只发生在**审批通过后**，且只写影子表；如需正式替换生产表（Promote）需另行显式操作，本期不提供自动 Promote。
 
 ## 本地运行（含无 Key 开发模式）
 

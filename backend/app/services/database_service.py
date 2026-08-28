@@ -75,6 +75,27 @@ class DatabaseConnector:
         rows = self.sample_rows(table, limit or 100_000)
         return pd.DataFrame(rows)
 
+    # ---- Shadow Table writes (Phase 5) ----
+
+    def write_shadow_table(self, df, base_table: str, suffix: str) -> dict:
+        """将清洗结果写入**影子表**（绝不覆盖生产表）。
+
+        影子表命名：{base_table}_agent_{suffix}，在事务内 DROP IF EXISTS + 重建，
+        同一 suffix 重复运行幂等。suffix 由 run_id 短码生成，白名单校验防注入。
+        """
+        self._assert_safe_identifier(base_table)
+        if not re.match(r"^[A-Za-z0-9_]{1,32}$", suffix):
+            raise PermissionError(f"unsafe shadow suffix: {suffix!r}")
+        shadow = f"{base_table}_agent_{suffix}"
+        with self._engine.begin() as conn:
+            conn.execute(text(f"DROP TABLE IF EXISTS {shadow}"))
+        df.to_sql(shadow, self._engine, if_exists="replace", index=False)
+        return {
+            "shadow_table": shadow,
+            "rows": int(len(df)),
+            "columns": int(df.shape[1]),
+        }
+
     # ---- safety ----
 
     @staticmethod

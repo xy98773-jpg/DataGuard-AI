@@ -34,16 +34,19 @@ class ExecutionEngine:
         source_type: str = "file",
         mode: ExecutionMode = ExecutionMode.EXECUTE,
         mode_by_action: dict[str, ExecutionMode] | None = None,
+        run_suffix: str = "",
     ) -> dict:
         if source_type == "database":
             from app.tools.data.loader import load_database_dataframe
+            from app.services.dataset_service import DatasetService
 
             df = load_database_dataframe(dataset_id)
-            # Phase 5: database sources are READ ONLY — always preview, never write back.
-            mode = ExecutionMode.DRY_RUN
-            mode_by_action = None
+            db_source = DatasetService().get_database_source(dataset_id)
+            # Phase 5 Shadow Table 策略：database 源默认只读预览（DRY_RUN）；
+            # 只有审批通过（EXECUTE）才写入影子表，绝不覆盖生产表。
         else:
             df = load_dataframe(dataset_id, ext)
+            db_source = None
         results: list[dict] = []
         working = df
 
@@ -91,8 +94,33 @@ class ExecutionEngine:
                 results.append(self._failed(action, str(exc)))
 
         cleaned_key = ""
-        if any(r.get("mode") == ExecutionMode.EXECUTE.value and r.get("status") == "success" for r in results):
-            cleaned_key = self._save_cleaned(dataset_id, working, ext)
+        executed_any = any(
+            r.get("mode") == ExecutionMode.EXECUTE.value and r.get("status") == "success" for r in results
+        )
+        if executed_any:
+            if db_source is not None:
+                # Shadow Table：清洗结果写入 {table}_agent_{suffix}，生产表保持不变
+                from app.services.database_service import DatabaseConnector
+
+                connector = DatabaseConnector(**db_source["connection"])
+                shadow = connector.write_shadow_table(
+                    working, db_source["table"], run_suffix or "run"
+                )
+                cleaned_key = f"shadow:{shadow['shadow_table']}"
+                results.append(
+                    {
+                        "tool": "shadow_table",
+                        "column": db_source["table"],
+                        "status": "success",
+                        "affected_rows": int(shadow["rows"]),
+                        "samples": [],
+                        "mode": "EXECUTE",
+                        "shadow_table": shadow["shadow_table"],
+                    }
+                )
+                logger.info(f"[execution] shadow table written: {shadow['shadow_table']} ({shadow['rows']} rows)")
+            else:
+                cleaned_key = self._save_cleaned(dataset_id, working, ext)
 
         return {
             "mode": mode.value,

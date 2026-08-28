@@ -15,7 +15,11 @@ _svc = DatasetService()
 
 @router.get("/dataset/{dataset_id}/outputs")
 def get_outputs(dataset_id: str) -> dict:
-    """治理交付物：cleaned.csv 是否存在 + validation_report.json 内容."""
+    """治理交付物：cleaned.csv 是否存在 + validation_report.json 内容.
+
+    对 database 源：交付物是**影子表**（execution 记录中 tool=shadow_table 的项），
+    返回 shadow_table / shadow_rows，cleaned_exists 置 True（影子表即交付物）。
+    """
     storage = get_object_storage()
     cleaned_key = f"outputs/{dataset_id}/cleaned.csv"
     report_key = f"outputs/{dataset_id}/validation_report.json"
@@ -27,6 +31,16 @@ def get_outputs(dataset_id: str) -> dict:
             result["report"] = None
     else:
         result["report"] = None
+    # Shadow Table（database 源交付物）：从执行记录提取影子表信息
+    report = result.get("report") or {}
+    shadow_item = next(
+        (e for e in report.get("execution", []) if e.get("tool") == "shadow_table"),
+        None,
+    )
+    if shadow_item:
+        result["shadow_table"] = shadow_item.get("shadow_table", "")
+        result["shadow_rows"] = shadow_item.get("affected_rows", 0)
+        result["cleaned_exists"] = True  # 影子表即 database 源的治理交付物
     return result
 
 

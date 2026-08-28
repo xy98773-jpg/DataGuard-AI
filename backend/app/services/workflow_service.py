@@ -25,7 +25,7 @@ from app.storage.database import SessionLocal
 from app.storage.object_store import get_object_storage
 from app.trace import get_collector
 
-_NODE_ORDER = ["supervisor", "profiler", "inspector", "planner", "plan_validator", "risk", "approval", "execution", "validator"]
+_NODE_ORDER = ["supervisor", "profiler", "inspector", "planner", "plan_validator", "risk", "approval", "execution", "validator", "reflection"]
 
 
 class WorkflowService:
@@ -79,6 +79,11 @@ class WorkflowService:
                 .order_by(TraceEvent.id.asc())
                 .all()
             )
+        # 终态（SUCCESS/FAILED）进度固定 100%；其余按当前节点计算（reflection 为可选节点，置于末尾）
+        if row.status in ("SUCCESS", "FAILED"):
+            progress = 100
+        else:
+            progress = self._progress(row.current_node)
         return {
             "run_id": row.id,
             "dataset_id": row.dataset_id,
@@ -86,7 +91,7 @@ class WorkflowService:
             "status": row.status,
             "current_node": row.current_node,
             "iteration": row.iteration,
-            "progress": self._progress(row.current_node),
+            "progress": progress,
             "nodes": _NODE_ORDER,
             "node_states": self._derive_node_states(events, _NODE_ORDER),
         }

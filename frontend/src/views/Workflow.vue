@@ -413,7 +413,11 @@ onUnmounted(stopPoll)
                   <div class="rs-num rs-score">{{ validation?.before_score?.toFixed?.(2) ?? validation?.before_score }} → {{ validation?.after_score?.toFixed?.(2) ?? validation?.after_score }}</div>
                   <div class="rs-label">质量评分</div>
                 </div>
-                <div class="rs-item" v-if="outputs?.cleaned_exists">
+                <div class="rs-item" v-if="outputs?.shadow_table">
+                  <el-tag type="success" size="small" effect="dark">影子表</el-tag>
+                  <div class="rs-label">已写入 {{ outputs.shadow_table }}（{{ outputs.shadow_rows }} 行）</div>
+                </div>
+                <div class="rs-item" v-else-if="outputs?.cleaned_exists">
                   <a :href="`/api/dataset/${dataset.dataset_id}/cleaned.csv`" download>
                     <el-button type="success" size="small">⬇ cleaned.csv</el-button>
                   </a>

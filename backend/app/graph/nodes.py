@@ -255,6 +255,7 @@ def execution_node(state: DataGovernanceState) -> dict:
         source_type=state.get("source_type", "file"),
         mode=ExecutionMode.EXECUTE,
         mode_by_action=mode_by_action,
+        run_suffix=state.get("run_id", "").removeprefix("run_"),  # 影子表后缀（database 源写回用）
     )
     _emit(
         state, node, EventType.TOOL_RESULT,
@@ -286,7 +287,16 @@ def validator_node(state: DataGovernanceState) -> dict:
         before_df = load_dataframe(dataset_id, ext)
 
     cleaned_key = state.get("cleaned_key", "")
-    if cleaned_key:
+    if cleaned_key.startswith("shadow:"):
+        # Shadow Table 策略：database 源清洗结果在影子表，从影子表读回做质量对比
+        from app.services.database_service import DatabaseConnector
+        from app.services.dataset_service import DatasetService
+
+        shadow_table = cleaned_key.split(":", 1)[1]
+        source = DatasetService().get_database_source(dataset_id)
+        connector = DatabaseConnector(**source["connection"]) if source else None
+        after_df = connector.fetch_table_dataframe(shadow_table) if connector else before_df
+    elif cleaned_key:
         data = get_object_storage().load(cleaned_key)
         after_df = pd.read_csv(BytesIO(data))
     else:

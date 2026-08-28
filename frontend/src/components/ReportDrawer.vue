@@ -16,6 +16,8 @@ const plan = computed(() => report.value.plan?.actions ?? [])
 const exec = computed(() => report.value.execution ?? [])
 const validation = computed(() => report.value.validation ?? {})
 const cleanedExists = computed(() => !!props.outputs?.cleaned_exists)
+// database 源交付物是影子表（无 csv 文件），不显示 csv 下载
+const shadowInfo = computed(() => props.outputs?.shadow_table ?? '')
 
 const DIM_ZH: Record<string, string> = {
   completeness: '完整性',
@@ -79,7 +81,10 @@ function fmtAfter(s: any): string {
     <div class="report-body">
       <!-- 顶部操作条 -->
       <div class="report-actions">
-        <a v-if="cleanedExists" :href="`/api/dataset/${dataset?.dataset_id}/cleaned.csv`" download>
+        <el-tag v-if="shadowInfo" type="success" size="small" effect="dark">
+          已写入影子表 {{ shadowInfo }}（{{ outputs?.shadow_rows ?? 0 }} 行，生产表未改动）
+        </el-tag>
+        <a v-else-if="cleanedExists" :href="`/api/dataset/${dataset?.dataset_id}/cleaned.csv`" download>
           <el-button type="success" size="small">⬇ 下载 cleaned.csv</el-button>
         </a>
         <el-button type="primary" size="small" @click="emit('close')">收起报告</el-button>

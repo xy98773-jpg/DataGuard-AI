@@ -97,3 +97,63 @@ def test_database_governance_flow(mysql_conn):
         status = wf.get_status(run_id)
     assert status["status"] == "SUCCESS"
     assert status["iteration"] >= 1
+
+
+def test_shadow_table_write(mysql_conn):
+    """影子表写入：生产表不变，影子表包含清洗后数据，重复运行幂等。"""
+    import pandas as pd
+
+    df = mysql_conn.fetch_table_dataframe("customer")
+    before = len(mysql_conn.sample_rows("customer", limit=100_000))
+
+    cleaned = df.copy()
+    cleaned["name"] = cleaned["name"].astype(str).str.strip()
+    info = mysql_conn.write_shadow_table(cleaned, "customer", "test01")
+    assert info["shadow_table"] == "customer_agent_test01"
+    assert info["rows"] == len(df)
+
+    # 影子表可读回，生产表行数不变
+    shadow_df = mysql_conn.fetch_table_dataframe("customer_agent_test01")
+    assert len(shadow_df) == len(df)
+    assert len(mysql_conn.sample_rows("customer", limit=100_000)) == before
+
+    # 同一 suffix 重复运行幂等（DROP + 重建）
+    mysql_conn.write_shadow_table(cleaned.head(5), "customer", "test01")
+    assert len(mysql_conn.fetch_table_dataframe("customer_agent_test01")) == 5
+
+
+def test_execution_database_writes_shadow_table(mysql_conn):
+    """Execution Engine 对 database 源 EXECUTE：清洗结果写入影子表，不覆盖生产表。"""
+    from app.governance.execution import ExecutionEngine
+    from app.schemas.common import ExecutionMode, RiskLevel
+    from app.schemas.plan import CleaningPlan, PlanAction
+
+    svc = DatasetService()
+    info = svc.register_database(MYSQL_CONN, "customer", "mysql.customer")
+
+    plan = CleaningPlan(
+        actions=[
+            PlanAction(
+                tool="trim_whitespace",
+                column="name",
+                parameters={},
+                risk=RiskLevel.LOW,
+            )
+        ]
+    )
+    result = ExecutionEngine().execute_plan(
+        dataset_id=info.id,
+        plan=plan,
+        ext="csv",
+        source_type="database",
+        mode=ExecutionMode.EXECUTE,
+        run_suffix="tst02",
+    )
+    assert result["cleaned_key"].startswith("shadow:")
+    shadow = result["cleaned_key"].split(":", 1)[1]
+    assert shadow == "customer_agent_tst02"
+    # 影子表真实存在且行数与生产表一致；生产表未被修改
+    assert len(mysql_conn.fetch_table_dataframe(shadow)) == len(
+        mysql_conn.fetch_table_dataframe("customer")
+    )
+    assert mysql_conn.sample_rows(shadow, limit=1)[0]  # 影子表有数据

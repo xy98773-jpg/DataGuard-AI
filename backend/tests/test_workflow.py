@@ -42,6 +42,38 @@ def test_full_workflow_sync_run():
     assert status["progress"] == 100
 
 
+def test_node_order_includes_reflection_and_aggregates_state():
+    """reflection 节点纳入图谱顺序；validator FAIL 后的反思事件应聚合为 success。"""
+    from types import SimpleNamespace
+
+    from app.services.workflow_service import _NODE_ORDER, WorkflowService
+
+    # _NODE_ORDER 包含 reflection（置于末尾，可选节点不占主链路进度）
+    assert "reflection" in _NODE_ORDER
+
+    def ev(node: str, etype: str):
+        return SimpleNamespace(node=node, event_type=etype, status="success")
+
+    # 模拟一轮完整执行 + validator FAIL -> reflection -> planner 重规划
+    events = [
+        ev("supervisor", "AGENT_DECISION"),
+        ev("profiler", "AGENT_DECISION"),
+        ev("inspector", "AGENT_DECISION"),
+        ev("planner", "AGENT_DECISION"),
+        ev("plan_validator", "VALIDATION"),
+        ev("risk", "AGENT_DECISION"),
+        ev("execution", "TOOL_RESULT"),
+        ev("validator", "VALIDATION"),
+        ev("reflection", "AGENT_DECISION"),
+        ev("planner", "AGENT_START"),
+        ev("planner", "AGENT_DECISION"),
+    ]
+    states = WorkflowService._derive_node_states(events, _NODE_ORDER)
+    assert states["reflection"] == "success"  # 反思节点真实执行并高亮
+    assert states["validator"] == "success"
+    assert states["planner"] == "success"  # 重规划后仍标记成功
+
+
 def test_workflow_persists_results():
     dataset_id = _upload()
     run_id, status = _complete(dataset_id)
