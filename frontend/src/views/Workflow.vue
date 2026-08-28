@@ -231,6 +231,15 @@ const trendOpen = ref(false)
 // 运行中任务弹窗（治理工作台发起任务，这里查看/取消最直观）
 const activeTasksOpen = ref(false)
 
+// 取消任务后：若工作台当前正显示该 run，重置为初始界面（清空进度/结果/图谱，停止轮询）
+function onTaskCancelled(runId: string) {
+  if (store.activeRunId !== runId) return
+  stopPoll()
+  store.resetRun()
+  store.setActiveRun('')
+  ElMessage.info('任务已取消，工作台已重置')
+}
+
 // 导出治理报告（HTML / PDF）——工作台结果区
 async function exportReport(fmt: 'pdf' | 'html') {
   if (!activeRunId.value) return
@@ -610,7 +619,7 @@ onUnmounted(stopPoll)
       @close="closeReport"
     />
     <QualityTrend v-model:open="trendOpen" />
-    <RunningTasks v-model:open="activeTasksOpen" />
+    <RunningTasks v-model:open="activeTasksOpen" @cancelled="onTaskCancelled" />
   </div>
 </template>
 

@@ -4,7 +4,7 @@ import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps<{ open: boolean }>()
-const emit = defineEmits<{ (e: 'update:open', v: boolean): void }>()
+const emit = defineEmits<{ (e: 'update:open', v: boolean): void; (e: 'cancelled', runId: string): void }>()
 
 const runs = ref<any[]>([])
 const loading = ref(false)
@@ -51,6 +51,7 @@ async function cancelRun(run: any) {
     return
   }
   ElMessage.success('任务已取消')
+  emit('cancelled', run.run_id)  // 通知父组件：若当前正显示该 run，应重置工作台
   await load()
 }
 

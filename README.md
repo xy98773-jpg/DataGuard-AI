@@ -150,7 +150,7 @@ START → supervisor -(route)→ profiler → inspector → planner → plan_val
 
 **LLM 可靠性（fallback + 结果缓存）**：模型设置页可配置**备用模型**（默认 `qwen-turbo`，百炼同 Key）——主模型调用失败自动切换重试；**LLM 结果缓存**（LRU 128 条 + TTL 1 小时，key = prompt 哈希）——同一数据重复治理时直接命中缓存，**节省 token**。设置页清晰注明百炼免费/低成本模型：`qwen-flash`（长期限免）、`qwen-turbo`（低成本）、`qwen-plus`（含免费额度）——来源：阿里云百炼官方「模型大全功能规格与计费」。
 
-**任务并发治理**：同时最多运行 **3** 个治理任务（超出返回 429「已达到最大并发任务数」）；数据源页「运行中任务」面板实时列出 PENDING/RUNNING/WAITING_APPROVAL 任务（状态 + 当前节点 + 3 秒自动刷新），**可一键取消**（二次确认）；后端取消 API 支持 PENDING/WAITING_APPROVAL/RUNNING 状态，取消后状态置 `CANCELLED` 并从活跃集移除。接口：`GET /api/workflow/active`、`POST /api/workflow/{run_id}/cancel`。
+**任务并发治理**：同时最多运行 **3** 个治理任务（超出返回 429「已达到最大并发任务数」）；治理工作台工具条「运行中任务」面板（紧挨质量趋势按钮）实时列出 PENDING/RUNNING/WAITING_APPROVAL 任务（状态 + 当前节点 + 3 秒自动刷新），**可一键取消**（二次确认）；**取消当前正在查看的任务后，工作台自动重置为初始界面**（清空进度/结果/图谱、停止轮询）；后端取消 API 支持 PENDING/WAITING_APPROVAL/RUNNING 状态，取消后状态置 `CANCELLED` 并从活跃集移除。接口：`GET /api/workflow/active`、`POST /api/workflow/{run_id}/cancel`。
 
 **数据源注册 → 治理跳转**：从「数据源」页注册网页/数据库数据集后点「前往治理工作台」，会自动**选中新数据集并清空上一次运行状态**（避免持久化恢复的旧检测信息误导）；数据库注册同样处理。
 - **全中文界面**：菜单 / 视图 / 按钮 / 表格 / 提示全部中文化（技术值如 API 字段保持英文，仅展示层翻译）
