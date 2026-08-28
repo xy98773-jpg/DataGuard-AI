@@ -79,3 +79,11 @@ def test_issues_api_returns_dataset_name_and_newest_first(client):
     assert issues, "expected at least one persisted issue"
     for i in issues:
         assert i.get("dataset_name"), "dataset_name must be resolved to a filename"
+
+    # 按数据集筛选：只返回该数据集的问题（Dashboard「问题」按钮跳转用）
+    filtered = client.get(f"/api/issues?dataset_id={dataset_id}").json().get("issues", [])
+    assert filtered, "expected issues for the dataset filter"
+    assert all(i["dataset_id"] == dataset_id for i in filtered)
+    # 不存在的数据集 → 空
+    empty = client.get("/api/issues?dataset_id=ds_nonexistent_123").json().get("issues", [])
+    assert empty == []

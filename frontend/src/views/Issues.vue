@@ -1,10 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { enZh, ISSUE_TYPE_ZH, SEVERITY_ZH } from '../utils/i18n'
 
+const route = useRoute()
 const issues = ref<any[]>([])
 const severityFilter = ref('')
 const typeFilter = ref('')
+const datasetFilter = ref('') // 按数据集筛选（支持 /issues?dataset=xxx 跳转）
+const datasets = ref<any[]>([]) // 数据集下拉选项
 const loading = ref(false)
 
 /** 按数据集分组（第一层级：数据集名称，文件名作副标题） */
@@ -36,12 +40,22 @@ const stats = computed(() => ({
 
 const types = computed(() => [...new Set(issues.value.map((i) => i.type))].sort())
 
+async function loadDatasets() {
+  try {
+    const resp = await fetch('/api/dataset/list?limit=50')
+    datasets.value = (await resp.json()).datasets ?? []
+  } catch {
+    datasets.value = []
+  }
+}
+
 async function load() {
   loading.value = true
   try {
     const params = new URLSearchParams()
     if (severityFilter.value) params.set('severity', severityFilter.value)
     if (typeFilter.value) params.set('issue_type', typeFilter.value)
+    if (datasetFilter.value) params.set('dataset_id', datasetFilter.value)
     const resp = await fetch(`/api/issues?${params.toString()}`)
     issues.value = (await resp.json()).issues ?? []
   } finally {
@@ -49,8 +63,14 @@ async function load() {
   }
 }
 
-watch([severityFilter, typeFilter], load)
-onMounted(load)
+watch([severityFilter, typeFilter, datasetFilter], load)
+onMounted(async () => {
+  await loadDatasets()
+  // 从 Dashboard「问题」按钮跳转：/issues?dataset=ds_xxx 预选数据集
+  const q = route.query.dataset
+  if (typeof q === 'string' && q) datasetFilter.value = q
+  load()
+})
 </script>
 
 <template>
@@ -67,6 +87,9 @@ onMounted(load)
         <div class="card-head">
           <span>数据质量问题（按数据集分级）</span>
           <div class="filters">
+            <el-select v-model="datasetFilter" placeholder="全部数据集" clearable filterable style="width: 200px">
+              <el-option v-for="d in datasets" :key="d.id" :label="d.name" :value="d.id" />
+            </el-select>
             <el-select v-model="severityFilter" placeholder="全部严重度" clearable style="width: 140px">
               <el-option label="HIGH（高）" value="HIGH" />
               <el-option label="MEDIUM（中）" value="MEDIUM" />

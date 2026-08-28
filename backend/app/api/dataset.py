@@ -2,9 +2,10 @@
 
 import json
 
-from fastapi import APIRouter, File, Form, HTTPException, Response, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from sqlalchemy import func
 
-from app.models import Dataset
+from app.models import Dataset, Issue as IssueRow, WorkflowRun
 from app.services.dataset_service import DatasetService
 from app.storage.database import SessionLocal
 from app.storage.object_store import get_object_storage
@@ -60,25 +61,73 @@ def download_cleaned(dataset_id: str) -> Response:
 
 
 @router.get("/dataset/list")
-def list_datasets(limit: int = 10) -> dict:
+def list_datasets(
+    limit: int = 10,
+    offset: int = 0,
+    search: str | None = Query(default=None),
+    source_type: str | None = Query(default=None),
+) -> dict:
+    """数据集列表（首页/工作台管理用）.
+
+    每行含：显示名（name，上传时自定义）/ 文件名 / 来源类型 / 行列数 /
+    最近一次治理状态（该数据集最新 run 的 status）/ 问题总数（跨运行 issues 计数）。
+    支持 search（按显示名/文件名模糊）、source_type 筛选、limit/offset 分页——
+    数据集多了之后也能快速定位与治理。
+    """
     with SessionLocal() as session:
+        q = session.query(Dataset)
+        if search:
+            like = f"%{search}%"
+            q = q.filter((Dataset.name.like(like)) | (Dataset.filename.like(like)))
+        if source_type:
+            q = q.filter(Dataset.source_type == source_type)
+        total = q.count()
         rows = (
-            session.query(Dataset)
-            .order_by(Dataset.created_at.desc())
+            q.order_by(Dataset.created_at.desc())
+            .offset(max(offset, 0))
             .limit(min(max(limit, 1), 50))
             .all()
         )
+
+        ds_ids = [r.id for r in rows]
+        # 每个数据集的最新一次运行状态（created_at 最大者）
+        run_status: dict[str, str] = {}
+        if ds_ids:
+            for run_id, ds_id, status in (
+                session.query(WorkflowRun.id, WorkflowRun.dataset_id, WorkflowRun.status)
+                .filter(WorkflowRun.dataset_id.in_(ds_ids))
+                .all()
+            ):
+                # 后查询到的（较新）覆盖旧值，等价于取最新 run 的状态
+                run_status[ds_id] = status
+        # 每个数据集的问题总数（跨运行）
+        issue_counts: dict[str, int] = {}
+        if ds_ids:
+            for ds_id, n in (
+                session.query(WorkflowRun.dataset_id, func.count(IssueRow.id))
+                .join(IssueRow, IssueRow.run_id == WorkflowRun.id)
+                .filter(WorkflowRun.dataset_id.in_(ds_ids))
+                .group_by(WorkflowRun.dataset_id)
+                .all()
+            ):
+                issue_counts[ds_id] = int(n)
+
         return {
+            "total": total,
             "datasets": [
                 {
                     "id": r.id,
+                    "name": r.name or r.filename,
                     "filename": r.filename,
                     "source_type": r.source_type,
                     "row_count": r.row_count,
+                    "column_count": r.column_count,
                     "created_at": r.created_at.isoformat() if r.created_at else "",
+                    "last_status": run_status.get(r.id, ""),  # SUCCESS/FAILED/WAITING_APPROVAL/RUNNING...
+                    "issue_count": issue_counts.get(r.id, 0),
                 }
                 for r in rows
-            ]
+            ],
         }
 
 

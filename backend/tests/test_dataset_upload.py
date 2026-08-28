@@ -55,3 +55,43 @@ def test_upload_unsupported_ext_rejected():
     """不支持的扩展名（如 .txt）应被拒绝，而不是静默按 CSV 解析。"""
     with pytest.raises(ValueError, match="unsupported file type"):
         DatasetService().save_upload("notes.txt", b"hello world")
+
+
+def test_dataset_list_has_name_status_and_search(client):
+    """数据集列表：返回自定义名 + 最近治理状态 + 问题数；支持 search 模糊筛选。"""
+    # 上传两个数据集，一个带自定义名
+    with open(DEMO_CSV, "rb") as f:
+        r1 = client.post(
+            "/api/dataset/upload",
+            files={"file": ("customer.csv", f, "text/csv")},
+            data={"name": "客户全量测试数据"},
+        )
+    with open(DEMO_CSV, "rb") as f:
+        r2 = client.post(
+            "/api/dataset/upload",
+            files={"file": ("orders.csv", f, "text/csv")},
+        )
+    ds1 = r1.json()["dataset_id"]
+
+    # 跑一次治理，产生 run 与 issues
+    from app.services.workflow_service import WorkflowService
+
+    WorkflowService().start(ds1, "govern")
+
+    body = client.get("/api/dataset/list?limit=20").json()
+    assert body["total"] >= 2
+    item = next(d for d in body["datasets"] if d["id"] == ds1)
+    assert item["name"] == "客户全量测试数据"  # 自定义名（之前 list 丢失 name 的根因）
+    assert item["filename"] == "customer.csv"
+    assert item["last_status"] in ("WAITING_APPROVAL", "RUNNING", "SUCCESS", "FAILED")
+    assert item["issue_count"] >= 1  # 治理后问题数>0
+
+    # search 按自定义名/文件名模糊过滤
+    hit = client.get("/api/dataset/list?search=客户").json()
+    assert any(d["name"] == "客户全量测试数据" for d in hit["datasets"])
+    miss = client.get("/api/dataset/list?search=不存在xyz").json()
+    assert miss["datasets"] == []
+
+    # source_type 筛选
+    only_file = client.get("/api/dataset/list?source_type=file").json()
+    assert all(d["source_type"] == "file" for d in only_file["datasets"])

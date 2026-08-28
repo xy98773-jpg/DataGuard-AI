@@ -38,6 +38,7 @@ def get_workflow(run_id: str) -> dict:
 def list_all_issues(
     severity: str | None = Query(default=None),
     issue_type: str | None = Query(default=None),
+    dataset_id: str | None = Query(default=None),
     limit: int = Query(default=100, ge=1, le=500),
 ) -> dict:
     """跨运行的问题列表（Issue Explorer 页数据源）."""
@@ -51,6 +52,8 @@ def list_all_issues(
             q = q.filter(IssueRow.severity == severity)
         if issue_type:
             q = q.filter(IssueRow.issue_type == issue_type)
+        if dataset_id:
+            q = q.filter(WorkflowRun.dataset_id == dataset_id)
         rows = q.order_by(WorkflowRun.created_at.desc(), IssueRow.id.desc()).limit(limit).all()
         return {
             "issues": [

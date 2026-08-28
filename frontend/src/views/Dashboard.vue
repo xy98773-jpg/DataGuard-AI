@@ -1,12 +1,22 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 
 const router = useRouter()
-const datasets = ref<any[]>([])
-const stats = ref<any>(null) // /api/dashboard/stats 平台统计
 
-// 状态 → 中文标签 & 颜色（与全站 STATUS_ZH 一致）
+// ---- 平台统计（GET /api/dashboard/stats）----
+const stats = ref<any>(null)
+
+// ---- 数据集管理列表（GET /api/dataset/list，支持搜索/筛选/分页）----
+const datasets = ref<any[]>([])
+const total = ref(0)
+const loading = ref(false)
+const search = ref('')
+const srcFilter = ref('')
+const page = ref(1)
+const pageSize = 10
+
+const SRC_MAP: Record<string, string> = { file: '文件', web: '网页', database: '数据库' }
 const STATUS_MAP: Record<string, { zh: string; type: 'success' | 'danger' | 'warning' | 'primary' | 'info' }> = {
   SUCCESS: { zh: '成功', type: 'success' },
   FAILED: { zh: '失败', type: 'danger' },
@@ -14,18 +24,7 @@ const STATUS_MAP: Record<string, { zh: string; type: 'success' | 'danger' | 'war
   RUNNING: { zh: '运行中', type: 'primary' },
   PENDING: { zh: '排队中', type: 'info' },
 }
-const SRC_MAP: Record<string, string> = { file: '文件', web: '网页', database: '数据库' }
 
-async function load() {
-  try {
-    const resp = await fetch('/api/dataset/list')
-    datasets.value = (await resp.json()).datasets ?? []
-  } catch {
-    /* ignore */
-  }
-}
-
-// 平台统计：总运行 / 成功率 / 问题数 / 数据集数 + 最近运行列表
 async function loadStats() {
   try {
     const resp = await fetch('/api/dashboard/stats')
@@ -35,12 +34,42 @@ async function loadStats() {
   }
 }
 
-onMounted(() => {
-  load()
-  loadStats()
-})
+// 数据集列表：搜索/筛选变化回到第 1 页，再加载
+async function loadDatasets() {
+  loading.value = true
+  try {
+    const params = new URLSearchParams({
+      limit: String(pageSize),
+      offset: String((page.value - 1) * pageSize),
+    })
+    if (search.value.trim()) params.set('search', search.value.trim())
+    if (srcFilter.value) params.set('source_type', srcFilter.value)
+    const resp = await fetch(`/api/dataset/list?${params.toString()}`)
+    const body = await resp.json()
+    datasets.value = body.datasets ?? []
+    total.value = body.total ?? 0
+  } catch {
+    datasets.value = []
+  } finally {
+    loading.value = false
+  }
+}
 
-// 统计卡片数据（4 项）
+watch([search, srcFilter], () => {
+  page.value = 1
+  loadDatasets()
+})
+watch(page, loadDatasets)
+
+function goGovernance(row: any) {
+  // 携带数据集 id 跳工作台：Workflow 页自动选中该数据集并清空旧状态
+  router.push({ path: '/workflow', query: { dataset: row.id } })
+}
+
+function goIssues(row: any) {
+  router.push({ path: '/issues', query: { dataset: row.id } })
+}
+
 const statCards = [
   { label: '运行总数', value: () => stats.value?.total_runs ?? 0, suffix: '次' },
   { label: '治理成功率', value: () => stats.value?.success_rate ?? 0, suffix: '%' },
@@ -48,35 +77,34 @@ const statCards = [
   { label: '数据集', value: () => stats.value?.datasets ?? 0, suffix: '个' },
 ]
 
-function goRun(row: any) {
-  // 跳转治理工作台查看该运行（页面按 activeRunId 恢复并展示图谱/追踪/报告）
-  router.push({ path: '/workflow' })
-}
-
 const quickStart = [
   { step: '1', title: '准备数据', desc: '上传 CSV / Excel / JSON 文件，或接入 MySQL / PostgreSQL / 网页数据源' },
   { step: '2', title: '启动治理', desc: '在「治理工作台」点击「开始治理」，Agent 自动完成画像、质检、规划' },
   { step: '3', title: '查看图谱与问题', desc: '工作流图谱实时展示执行进度，点击节点查看每个 Agent 的真实推理与工具调用' },
   { step: '4', title: '审批与验证', desc: '高风险操作在「审批中心」人工确认后执行，最终输出前后质量评分与治理报告' },
 ]
+
+onMounted(() => {
+  loadStats()
+  loadDatasets()
+})
 </script>
 
 <template>
   <div class="dashboard-page">
-    <el-card shadow="never" class="hero">
-      <h1 class="hero-title">DataGuard AI — 企业数据治理 Agent 平台</h1>
-      <p class="hero-desc">
-        由 <b>Agent 负责理解与决策</b>、<b>Workflow 负责流程控制</b>、<b>工具负责确定性执行</b>、
-        <b>校验器负责结果验证</b>、<b>风险引擎负责安全控制</b>、<b>追踪系统负责全过程可观测</b>，
-        实现从数据理解、质量检测、治理规划到安全执行的完整智能化数据治理流程。
-      </p>
-      <div class="hero-actions">
-        <el-button type="primary" size="large" @click="router.push('/workflow')">前往治理工作台</el-button>
-        <el-button size="large" @click="router.push('/datasource')">接入数据源</el-button>
+    <!-- 顶部窄标题条（不再占半屏） -->
+    <div class="topbar">
+      <div class="topbar-title">
+        <span class="logo">DataGuard AI</span>
+        <span class="subtitle">企业数据治理 Agent 平台</span>
       </div>
-    </el-card>
+      <div class="topbar-actions">
+        <el-button type="primary" @click="router.push('/workflow')">前往治理工作台</el-button>
+        <el-button @click="router.push('/datasource')">接入数据源</el-button>
+      </div>
+    </div>
 
-    <!-- 平台统计卡片（来自真实业务库） -->
+    <!-- 平台统计卡片 -->
     <el-row :gutter="12" class="stats-row">
       <el-col :span="6" v-for="c in statCards" :key="c.label">
         <el-card shadow="hover" class="stat-card">
@@ -86,77 +114,85 @@ const quickStart = [
       </el-col>
     </el-row>
 
-    <el-row :gutter="12">
-      <el-col :span="14">
-        <el-card shadow="never">
-          <template #header>快速开始（4 步）</template>
-          <div class="quick-list">
-            <div v-for="q in quickStart" :key="q.step" class="quick-item">
-              <el-tag type="primary" effect="dark" size="large" class="quick-step">{{ q.step }}</el-tag>
-              <div>
-                <div class="quick-title">{{ q.title }}</div>
-                <div class="quick-desc">{{ q.desc }}</div>
-              </div>
-            </div>
+    <!-- 数据集管理列表（核心：搜索/筛选/分页应对数据集变多） -->
+    <el-card shadow="never" class="ds-card">
+      <template #header>
+        <div class="card-head">
+          <span>数据集管理（共 {{ total }} 个）</span>
+          <div class="list-tools">
+            <el-input v-model="search" placeholder="搜索数据集名称 / 文件名" clearable style="width: 230px" />
+            <el-select v-model="srcFilter" placeholder="来源类型" clearable style="width: 130px">
+              <el-option label="文件" value="file" />
+              <el-option label="网页" value="web" />
+              <el-option label="数据库" value="database" />
+            </el-select>
           </div>
-        </el-card>
-      </el-col>
+        </div>
+      </template>
 
-      <el-col :span="10">
-        <el-card shadow="never">
-          <template #header>最近数据集</template>
-          <el-empty v-if="!datasets.length" description="还没有数据集，先去上传一个吧" :image-size="60" />
-          <div v-else class="ds-list">
-            <div v-for="d in datasets" :key="d.id" class="ds-item">
-              <div class="ds-name">{{ d.filename }}</div>
-              <div class="ds-meta">
-                {{ d.row_count }} 行 · {{ SRC_MAP[d.source_type] ?? d.source_type }}
-                <el-button type="primary" link size="small" @click="router.push('/workflow')">治理 →</el-button>
-              </div>
-            </div>
-          </div>
-        </el-card>
-      </el-col>
-    </el-row>
-
-    <!-- 最近运行（含状态/质量分/重规划次数） -->
-    <el-card shadow="never" class="recent-card">
-      <template #header>最近运行</template>
-      <el-empty v-if="!stats?.recent_runs?.length" description="还没有运行记录，去治理工作台启动一次吧" :image-size="60" />
-      <el-table v-else :data="stats.recent_runs" stripe style="width: 100%" @row-click="goRun">
-        <el-table-column label="运行 ID" prop="run_id" width="180" />
-        <el-table-column label="数据集" prop="dataset_name" min-width="140" />
-        <el-table-column label="类型" width="90">
-          <template #default="{ row }">{{ SRC_MAP[row.source_type] ?? row.source_type }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="110">
+      <el-table v-loading="loading" :data="datasets" stripe style="width: 100%">
+        <el-table-column label="数据集" min-width="240">
           <template #default="{ row }">
-            <el-tag :type="(STATUS_MAP[row.status]?.type ?? 'info') as any" size="small" effect="dark">
-              {{ STATUS_MAP[row.status]?.zh ?? row.status }}
-            </el-tag>
+            <div class="ds-name">{{ row.name }}</div>
+            <div class="ds-file">{{ row.filename }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="质量评分" width="160">
+        <el-table-column label="来源" width="90">
           <template #default="{ row }">
-            <span v-if="row.before_score != null" class="score-text">
-              {{ Number(row.before_score).toFixed(2) }} → {{ Number(row.after_score).toFixed(2) }}
-            </span>
-            <span v-else class="score-none">—</span>
+            <el-tag size="small" effect="plain">{{ SRC_MAP[row.source_type] ?? row.source_type }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="重规划" width="90">
+        <el-table-column label="行数" width="100">
+          <template #default="{ row }">{{ row.row_count ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="治理状态" width="120">
           <template #default="{ row }">
-            <el-tag v-if="row.iteration > 0" type="warning" size="small" effect="plain">{{ row.iteration }} 次</el-tag>
-            <span v-else class="score-none">—</span>
+            <template v-if="row.last_status">
+              <el-tag :type="(STATUS_MAP[row.last_status]?.type ?? 'info') as any" size="small" effect="dark">
+                {{ STATUS_MAP[row.last_status]?.zh ?? row.last_status }}
+              </el-tag>
+            </template>
+            <span v-else class="never">未治理</span>
           </template>
         </el-table-column>
-        <el-table-column label="创建时间" min-width="170">
+        <el-table-column label="问题数" width="90">
           <template #default="{ row }">
-            <span class="time-text">{{ row.created_at ? new Date(row.created_at).toLocaleString('zh-CN') : '' }}</span>
+            <el-badge :value="row.issue_count ?? 0" :hidden="!row.issue_count" type="danger" />
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="goGovernance(row)">治理 →</el-button>
+            <el-button link @click="goIssues(row)">问题</el-button>
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="pager">
+        <el-pagination
+          layout="prev, pager, next, total"
+          :total="total"
+          :page-size="pageSize"
+          :current-page="page"
+          @current-change="(p: number) => (page = p)"
+        />
+      </div>
     </el-card>
+
+    <!-- 使用引导（折叠，默认收起） -->
+    <el-collapse class="guide">
+      <el-collapse-item title="如何使用（4 步快速上手）">
+        <div class="quick-list">
+          <div v-for="q in quickStart" :key="q.step" class="quick-item">
+            <el-tag type="primary" effect="dark" size="large" class="quick-step">{{ q.step }}</el-tag>
+            <div>
+              <div class="quick-title">{{ q.title }}</div>
+              <div class="quick-desc">{{ q.desc }}</div>
+            </div>
+          </div>
+        </div>
+      </el-collapse-item>
+    </el-collapse>
   </div>
 </template>
 
@@ -164,23 +200,29 @@ const quickStart = [
 .dashboard-page {
   max-width: 1300px;
 }
-.hero {
-  margin-bottom: 12px;
+/* ---- 顶部窄标题条 ---- */
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
   background: linear-gradient(135deg, #0b2447 0%, #1677ff 100%);
   color: #fff;
+  border-radius: 8px;
+  padding: 14px 20px;
+  margin-bottom: 12px;
 }
-.hero-title {
-  margin: 0 0 12px;
-  font-size: 26px;
+.topbar-title {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
 }
-.hero-desc {
-  font-size: 14px;
-  line-height: 1.9;
-  color: rgba(255, 255, 255, 0.92);
-  max-width: 900px;
+.logo {
+  font-size: 20px;
+  font-weight: 700;
 }
-.hero-actions {
-  margin-top: 18px;
+.subtitle {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.85);
 }
 /* ---- 统计卡片 ---- */
 .stats-row {
@@ -206,11 +248,49 @@ const quickStart = [
   font-size: 13px;
   color: #606266;
 }
-/* ---- 快速开始 / 最近数据集 ---- */
+/* ---- 数据集管理列表 ---- */
+.ds-card {
+  margin-bottom: 12px;
+}
+.card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.list-tools {
+  display: flex;
+  gap: 8px;
+}
+.ds-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: #303133;
+}
+.ds-file {
+  font-size: 12px;
+  color: #909399;
+  margin-top: 2px;
+}
+.never {
+  color: #c0c4cc;
+  font-size: 12px;
+}
+.pager {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
+/* ---- 使用引导（折叠） ---- */
+.guide {
+  border-radius: 6px;
+}
 .quick-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
+  padding: 4px 8px;
 }
 .quick-item {
   display: flex;
@@ -223,7 +303,7 @@ const quickStart = [
 }
 .quick-title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: 14px;
   color: #303133;
 }
 .quick-desc {
@@ -231,43 +311,5 @@ const quickStart = [
   color: #909399;
   margin-top: 4px;
   line-height: 1.7;
-}
-.ds-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-.ds-item {
-  border: 1px solid #e4e7ed;
-  border-radius: 8px;
-  padding: 10px 12px;
-}
-.ds-name {
-  font-weight: 600;
-  font-size: 14px;
-}
-.ds-meta {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #909399;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-/* ---- 最近运行表 ---- */
-.recent-card {
-  margin-top: 12px;
-}
-.score-text {
-  font-family: monospace;
-  font-size: 13px;
-  color: #303133;
-}
-.score-none {
-  color: #c0c4cc;
-}
-.time-text {
-  font-size: 12px;
-  color: #909399;
 }
 </style>
