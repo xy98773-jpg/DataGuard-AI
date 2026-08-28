@@ -146,6 +146,10 @@ START → supervisor -(route)→ profiler → inspector → planner → plan_val
 
 **多模型灵活配置（模型设置页）**：侧边栏「模型设置」——服务商快捷选择（阿里百炼 qwen-flash/qwen-max、DeepSeek、OpenAI 等）+ 模型名 / Base URL / API Key（**脱敏回显，仅末 4 位，留空保留原值**）/ 温度滑块 / max_tokens + **测试连接**（真实发请求验证）；保存后**立即热生效**（下次治理即用新模型，无需重启后端——LLM client 每次构造从 `llm_settings` 表读最新配置，未配置时回退 `.env`）；所有页面顶栏右上角显示「当前模型」标签。接口：`GET/PUT /api/settings/llm`（key 脱敏）、`POST /api/settings/llm/test`。Dashboard 新增**质量趋势**入口：移入**治理工作台**顶部工具条「质量趋势」按钮（避免首页过长），点击打开弹窗查看最近 N 次治理的 SVG 双折线（治理前灰虚线 → 治理后蓝实线 + 末端分数）+ 明细表（数据集/时间/前/后/▲提升），数据来自 `GET /api/dashboard/stats` 的 `quality_trend`。
 
+**登录认证（JWT）**：全站登录——默认管理员 `admin / admin123`（首次部署后请尽快修改）；密码 pbkdf2 哈希存储；未登录访问自动跳转登录页；**敏感写操作需登录**（删除数据集、修改 LLM 配置 → 未登录返回 401，前端拦截跳登录）。顶栏显示当前用户名 + 退出按钮。接口：`POST /api/auth/login`、`GET /api/auth/me`。
+
+**LLM 可靠性（fallback + 结果缓存）**：模型设置页可配置**备用模型**（默认 `qwen-turbo`，百炼同 Key）——主模型调用失败自动切换重试；**LLM 结果缓存**（LRU 128 条 + TTL 1 小时，key = prompt 哈希）——同一数据重复治理时直接命中缓存，**节省 token**。设置页清晰注明百炼免费/低成本模型：`qwen-flash`（长期限免）、`qwen-turbo`（低成本）、`qwen-plus`（含免费额度）——来源：阿里云百炼官方「模型大全功能规格与计费」。
+
 **数据源注册 → 治理跳转**：从「数据源」页注册网页/数据库数据集后点「前往治理工作台」，会自动**选中新数据集并清空上一次运行状态**（避免持久化恢复的旧检测信息误导）；数据库注册同样处理。
 - **全中文界面**：菜单 / 视图 / 按钮 / 表格 / 提示全部中文化（技术值如 API 字段保持英文，仅展示层翻译）
 - **数据持久化**：数据集与运行任务持久化到 SQLite + 浏览器 localStorage；运行时状态保存在 Pinia store（切换页面不丢失），刷新后按 run_id 自动恢复并**持续轮询直到任务终态**；审批暂停时 issues/plan/trace 同步持久化，恢复页面即可看到完整进度

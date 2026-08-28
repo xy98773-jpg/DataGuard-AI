@@ -26,6 +26,9 @@ def _fallback() -> dict:
         "base_url": settings.llm_base_url,
         "temperature": settings.llm_temperature,
         "max_tokens": settings.llm_max_tokens,
+        "fallback_model": settings.llm_fallback_model,
+        "fallback_base_url": settings.llm_fallback_base_url,
+        "fallback_api_key": settings.llm_fallback_api_key,
     }
 
 
@@ -42,6 +45,9 @@ def get_llm_config() -> dict:
         "base_url": row.base_url or settings.llm_base_url,
         "temperature": row.temperature if row.temperature is not None else settings.llm_temperature,
         "max_tokens": row.max_tokens or settings.llm_max_tokens,
+        "fallback_model": row.fallback_model or settings.llm_fallback_model,
+        "fallback_base_url": row.fallback_base_url or settings.llm_fallback_base_url,
+        "fallback_api_key": row.fallback_api_key or settings.llm_fallback_api_key,
     }
 
 
@@ -61,6 +67,9 @@ def save_llm_config(cfg: dict) -> dict:
     api_key = (cfg.get("api_key") or "").strip()
     if not api_key:
         api_key = current.get("api_key", "")
+    fallback_api_key = (cfg.get("fallback_api_key") or "").strip()
+    if not fallback_api_key:
+        fallback_api_key = current.get("fallback_api_key", "") or api_key  # 未配备用 key 时复用主 key
 
     with SessionLocal() as session:
         row = session.query(LLMSetting).filter(LLMSetting.id == _DEFAULT_ID).first()
@@ -79,6 +88,9 @@ def save_llm_config(cfg: dict) -> dict:
             row.max_tokens = int(cfg.get("max_tokens", 4096))
         except (TypeError, ValueError):
             row.max_tokens = 4096
+        row.fallback_model = (cfg.get("fallback_model") or "").strip()
+        row.fallback_base_url = (cfg.get("fallback_base_url") or "").strip()
+        row.fallback_api_key = fallback_api_key
         row.updated_at = datetime.utcnow()
         session.commit()
 
@@ -99,7 +111,9 @@ def public_config() -> dict:
     """接口返回用：api_key 脱敏 + updated_at。"""
     cfg = get_llm_config()
     cfg["api_key_masked"] = mask_api_key(cfg.get("api_key", ""))
+    cfg["fallback_api_key_masked"] = mask_api_key(cfg.get("fallback_api_key", ""))
     cfg.pop("api_key", None)
+    cfg.pop("fallback_api_key", None)
     with SessionLocal() as session:
         row = session.query(LLMSetting).filter(LLMSetting.id == _DEFAULT_ID).first()
     cfg["configured"] = row is not None

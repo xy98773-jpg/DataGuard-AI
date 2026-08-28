@@ -61,12 +61,19 @@ class Settings(BaseSettings):
     llm_max_tokens: int = 4096
     llm_timeout_seconds: float = 180.0
     llm_max_retries: int = 2
+    # 备用模型（主模型失败自动切换；默认百炼 qwen-turbo，同 Key 可用）
+    llm_fallback_model: str = "qwen-turbo"
+    llm_fallback_base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    llm_fallback_api_key: str = ""
 
     # --- governance ---
     max_sample_rows: int = 20
     max_iteration: int = 3
     low_risk_auto_execute: bool = True
     medium_risk_mode: Literal["auto", "approval"] = "approval"  # MEDIUM policy
+
+    # --- auth (JWT) ---
+    auth_secret: str = "dev-secret-change-me"  # 生产用 DG_AUTH_SECRET 覆盖
 
     # --- workflow execution ---
     workflow_execution_mode: Literal["background", "sync"] = "background"

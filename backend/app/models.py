@@ -132,6 +132,7 @@ class LLMSetting(Base):
 
     单行记录（id="default"）：页面保存后立即生效，无需重启后端。
     api_key 只存明文于本地业务库，接口返回时一律脱敏。
+    fallback_*：备用模型（主模型失败自动切换，鲁棒性设计）。
     """
 
     __tablename__ = "llm_settings"
@@ -143,4 +144,23 @@ class LLMSetting(Base):
     base_url: Mapped[str] = mapped_column(String, default="")
     temperature: Mapped[float] = mapped_column(Float, default=0.0)
     max_tokens: Mapped[int] = mapped_column(Integer, default=4096)
+    fallback_model: Mapped[str] = mapped_column(String, default="")
+    fallback_base_url: Mapped[str] = mapped_column(String, default="")
+    fallback_api_key: Mapped[str] = mapped_column(String, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class User(Base):
+    """平台用户（登录认证用；JWT 无状态鉴权）。
+
+    默认初始化一个管理员账号（admin / 见 README），登录后才能执行
+    删除数据集、修改 LLM 配置等敏感写操作（接口层鉴权）。
+    """
+
+    __tablename__ = "users"
+
+    id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: gen_id("user"))
+    username: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    password_hash: Mapped[str] = mapped_column(String, nullable=False)
+    is_admin: Mapped[bool] = mapped_column(Integer, default=1)  # 目前单管理员
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

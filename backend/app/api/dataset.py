@@ -2,9 +2,10 @@
 
 import json
 
-from fastapi import APIRouter, File, Form, HTTPException, Query, Response, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Response, UploadFile
 from sqlalchemy import func
 
+from app.api.auth import get_current_user
 from app.models import Dataset, Issue as IssueRow, WorkflowRun
 from app.services.dataset_service import DatasetService
 from app.storage.database import SessionLocal
@@ -164,8 +165,8 @@ def rename_dataset(dataset_id: str, body: dict) -> dict:
 
 
 @router.delete("/dataset/{dataset_id}")
-def delete_dataset(dataset_id: str) -> dict:
-    """删除数据集：数据库记录 + 文件 + 该数据集全部运行历史（破坏性操作，前端需二次确认）."""
+def delete_dataset(dataset_id: str, user: dict = Depends(get_current_user)) -> dict:
+    """删除数据集：数据库记录 + 文件 + 该数据集全部运行历史（破坏性操作，需登录 + 前端二次确认）."""
     deleted = _svc.delete_dataset(dataset_id)
     if not deleted:
         raise HTTPException(status_code=404, detail="dataset not found")

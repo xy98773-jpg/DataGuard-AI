@@ -1,9 +1,18 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 
 const route = useRoute()
 const activeMenu = computed(() => route.path)
+
+// 登录后（跳转回来）刷新用户名
+const username = ref(localStorage.getItem('dg_username') || '')
+watch(
+  () => route.path,
+  () => {
+    username.value = localStorage.getItem('dg_username') || ''
+  },
+)
 
 // 当前生效模型（模型设置页保存后自动刷新）
 const currentModel = ref('')
@@ -17,6 +26,12 @@ async function loadModel() {
   }
 }
 onMounted(loadModel)
+
+function logout() {
+  localStorage.removeItem('dg_token')
+  localStorage.removeItem('dg_username')
+  window.location.href = '/login'
+}
 </script>
 
 <template>
@@ -59,6 +74,10 @@ onMounted(loadModel)
         <span class="app-header-title">企业数据治理 Agent 平台</span>
         <span v-if="currentModel" class="app-model-tag">
           <el-icon><Cpu /></el-icon>&nbsp;当前模型：{{ currentModel }}
+        </span>
+        <span class="app-user-tag">
+          <el-icon><User /></el-icon>&nbsp;{{ username }}
+          <el-button link type="danger" size="small" @click="logout">退出</el-button>
         </span>
       </el-header>
       <el-main class="app-main">
@@ -119,6 +138,13 @@ onMounted(loadModel)
   border: 1px solid #d9ecff;
   border-radius: 12px;
   padding: 2px 10px;
+}
+.app-user-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #606266;
 }
 .app-main {
   padding: 16px;

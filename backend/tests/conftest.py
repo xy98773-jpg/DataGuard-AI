@@ -39,3 +39,11 @@ init_db()  # ensure business tables exist for tests using services directly
 def client():
     with TestClient(app) as c:
         yield c
+
+
+@pytest.fixture()
+def auth_headers(client):
+    """登录默认管理员拿 token（敏感写操作测试用）。"""
+    resp = client.post("/api/auth/login", json={"username": "admin", "password": "admin123"})
+    assert resp.status_code == 200, resp.text
+    return {"Authorization": f"Bearer {resp.json()['token']}"}

@@ -125,8 +125,8 @@ def test_dataset_rename_updates_name_everywhere(client):
     assert client.patch("/api/dataset/ds_not_found_1", json={"name": "x"}).status_code == 404
 
 
-def test_dataset_delete_cascades(client):
-    """删除数据集：DB 记录 + 运行历史级联删除；list/issues 消失；不存在 404。"""
+def test_dataset_delete_cascades(client, auth_headers):
+    """删除数据集（需登录）：DB 记录 + 运行历史级联删除；list/issues 消失；不存在 404。"""
     with open(DEMO_CSV, "rb") as f:
         r = client.post(
             "/api/dataset/upload",
@@ -139,8 +139,11 @@ def test_dataset_delete_cascades(client):
     client.post("/api/workflow/start", json={"dataset_id": ds_id})
     assert client.get(f"/api/issues?dataset_id={ds_id}").json().get("issues")  # 治理后有 issues
 
-    # 删除
-    resp = client.delete(f"/api/dataset/{ds_id}")
+    # 未登录删除 → 401
+    assert client.delete(f"/api/dataset/{ds_id}").status_code == 401
+
+    # 登录后删除
+    resp = client.delete(f"/api/dataset/{ds_id}", headers=auth_headers)
     assert resp.status_code == 200
     assert resp.json()["deleted"] is True
 
@@ -149,5 +152,5 @@ def test_dataset_delete_cascades(client):
     assert all(d["id"] != ds_id for d in all_ds)
     assert client.get(f"/api/issues?dataset_id={ds_id}").json().get("issues") == []
 
-    # 重复删除 → 404
-    assert client.delete(f"/api/dataset/{ds_id}").status_code == 404
+    # 重复删除 → 404（需登录）
+    assert client.delete(f"/api/dataset/{ds_id}", headers=auth_headers).status_code == 404

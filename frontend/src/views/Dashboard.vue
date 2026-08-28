@@ -112,9 +112,17 @@ async function deleteDataset(row: any) {
   } catch {
     return  // 用户取消
   }
-  const resp = await fetch(`/api/dataset/${row.id}`, { method: 'DELETE' })
+  const resp = await fetch(`/api/dataset/${row.id}`, {
+    method: 'DELETE',
+    headers: { Authorization: `Bearer ${localStorage.getItem('dg_token') ?? ''}` },
+  })
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({}))
+    if (resp.status === 401) {
+      ElMessage.error('登录已过期，请重新登录')
+      setTimeout(() => (window.location.href = '/login'), 800)
+      return
+    }
     ElMessage.error(err?.detail || '删除失败')
     return
   }

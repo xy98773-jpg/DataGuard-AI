@@ -50,6 +50,17 @@ def init_db() -> None:
 
     Base.metadata.create_all(bind=engine)
     _migrate_add_column("datasets", "name", "VARCHAR(255) DEFAULT ''")
+    # LLMSetting fallback 列（幂等）
+    _migrate_add_column("llm_settings", "fallback_model", "VARCHAR(255) DEFAULT ''")
+    _migrate_add_column("llm_settings", "fallback_base_url", "VARCHAR(500) DEFAULT ''")
+    _migrate_add_column("llm_settings", "fallback_api_key", "VARCHAR(500) DEFAULT ''")
+    _ensure_admin_user()
+
+
+def _ensure_admin_user() -> None:
+    """首次启动初始化管理员账号（无则创建）。"""
+    from app.services.auth_service import ensure_admin
+    ensure_admin()
 
 
 def _migrate_add_column(table: str, column: str, ddl_type: str) -> None:

@@ -2,11 +2,12 @@
 
 import time
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from langchain_core.messages import HumanMessage
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel
 
+from app.api.auth import get_current_user
 from app.services.llm_settings import get_llm_config, public_config, save_llm_config
 
 router = APIRouter(tags=["settings"])
@@ -19,6 +20,9 @@ class LLMConfigIn(BaseModel):
     base_url: str = ""
     temperature: float = 0.0
     max_tokens: int = 4096
+    fallback_model: str = ""  # 备用模型（主模型失败自动切换）
+    fallback_base_url: str = ""
+    fallback_api_key: str = ""  # 空 = 保留旧值
 
 
 @router.get("/settings/llm")
@@ -28,8 +32,8 @@ def get_llm_settings() -> dict:
 
 
 @router.put("/settings/llm")
-def put_llm_settings(cfg: LLMConfigIn) -> dict:
-    """保存 LLM 配置并热生效（下次治理立即使用新模型）。"""
+def put_llm_settings(cfg: LLMConfigIn, user: dict = Depends(get_current_user)) -> dict:
+    """保存 LLM 配置并热生效（需登录；下次治理立即使用新模型）。"""
     try:
         saved = save_llm_config(cfg.model_dump())
     except ValueError as e:

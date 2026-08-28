@@ -10,8 +10,12 @@ const form = ref({
   base_url: '',
   temperature: 0,
   max_tokens: 4096,
+  fallback_model: '',
+  fallback_base_url: '',
+  fallback_api_key: '',
 })
 const maskedKey = ref('')
+const fallbackMaskedKey = ref('')
 const configured = ref(false)
 const updatedAt = ref('')
 const loading = ref(false)
@@ -46,7 +50,10 @@ async function load() {
     form.value.base_url = d.base_url
     form.value.temperature = d.temperature ?? 0
     form.value.max_tokens = d.max_tokens ?? 4096
+    form.value.fallback_model = d.fallback_model ?? ''
+    form.value.fallback_base_url = d.fallback_base_url ?? ''
     maskedKey.value = d.api_key_masked ?? ''
+    fallbackMaskedKey.value = d.fallback_api_key_masked ?? ''
     configured.value = !!d.configured
     updatedAt.value = d.updated_at ?? ''
     form.value.api_key = ''
@@ -93,11 +100,19 @@ async function save() {
   try {
     const resp = await fetch('/api/settings/llm', {
       method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${localStorage.getItem('dg_token') ?? ''}`,
+      },
       body: JSON.stringify(form.value),
     })
     const d = await resp.json()
     if (!resp.ok) {
+      if (resp.status === 401) {
+        ElMessage.error('登录已过期，请重新登录')
+        setTimeout(() => (window.location.href = '/login'), 800)
+        return
+      }
       ElMessage.error(d.detail || '保存失败')
       return
     }
@@ -164,7 +179,32 @@ onMounted(load)
           <el-input-number v-model="form.max_tokens" :min="256" :max="32768" :step="512" />
         </el-form-item>
 
-        <el-form-item>
+        <el-divider content-position="left">备用模型（主模型失败自动切换）</el-divider>
+
+        <el-form-item label="备用模型名称">
+          <el-input v-model="form.fallback_model" placeholder="如 qwen-turbo（百炼，低成本）" style="width: 300px" />
+          <div class="preset-hint">主模型调用失败时自动切换到备用模型，提升鲁棒性</div>
+        </el-form-item>
+
+        <el-form-item label="备用 API 地址">
+          <el-input v-model="form.fallback_base_url" placeholder="https://.../v1" style="width: 460px" />
+        </el-form-item>
+
+        <el-form-item label="备用 API Key">
+          <el-input
+            v-model="form.fallback_api_key"
+            type="password"
+            show-password
+            :placeholder="fallbackMaskedKey ? `已配置（${fallbackMaskedKey}），留空则保持不变` : '留空则复用主 Key'"
+            style="width: 460px"
+          />
+        </el-form-item>
+
+        <div class="free-models-tip">
+          💡 <b>百炼免费/低成本模型（同 Key 可用）</b>：<code>qwen-flash</code>（长期限免，推荐主模型）、<code>qwen-turbo</code>（低成本，推荐备用）、<code>qwen-plus</code>（含免费额度）。来源：阿里云百炼官方「模型大全功能规格与计费」。
+        </div>
+
+        <el-form-item style="margin-top: 12px">
           <el-button type="primary" :loading="loading" @click="save">保存配置</el-button>
           <el-button :loading="testing" @click="testConnection">测试连接</el-button>
         </el-form-item>
@@ -220,5 +260,21 @@ onMounted(load)
   margin-top: 10px;
   font-size: 12px;
   color: #909399;
+}
+.free-models-tip {
+  margin: 4px 0 14px 130px;
+  padding: 10px 14px;
+  background: #f0f9eb;
+  border: 1px solid #e1f3d8;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #529b2e;
+  line-height: 1.8;
+}
+.free-models-tip code {
+  background: #fff;
+  padding: 1px 6px;
+  border-radius: 4px;
+  border: 1px solid #e1f3d8;
 }
 </style>
