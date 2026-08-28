@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // 运行中任务面板：实时查看 PENDING/RUNNING/WAITING_APPROVAL 任务，可取消
-import { onMounted, onUnmounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 
 const props = defineProps<{ open: boolean }>()
@@ -54,19 +54,27 @@ async function cancelRun(run: any) {
   await load()
 }
 
-watch_open()
-function watch_open() {
-  // 打开时加载一次并启动轮询；关闭时停止
+// 打开时加载一次并启动轮询；关闭时停止（真实 watch 监听 open 变化）
+watch(
+  () => props.open,
+  (v) => {
+    if (v) {
+      load()
+      timer = window.setInterval(load, 3000)
+    } else if (timer) {
+      clearInterval(timer)
+      timer = null
+    }
+  },
+)
+
+onMounted(() => {
+  // 组件常驻挂载：如果初始就是打开状态也要加载
   if (props.open) {
     load()
     timer = window.setInterval(load, 3000)
-  } else if (timer) {
-    clearInterval(timer)
-    timer = null
   }
-}
-
-onMounted(() => watch_open())
+})
 onUnmounted(() => {
   if (timer) clearInterval(timer)
 })
