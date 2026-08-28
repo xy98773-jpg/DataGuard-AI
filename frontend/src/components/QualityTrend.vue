@@ -52,11 +52,23 @@ function renderChart() {
         },
       },
       legend: { data: ['治理前', '治理后'], top: 0, textStyle: { fontSize: 13, color: '#606266' } },
-      grid: { left: 48, right: 20, top: 36, bottom: 28 },
+      grid: { left: 52, right: 24, top: 40, bottom: 48 },
       xAxis: {
         type: 'category',
         data: names,
-        axisLabel: { fontSize: 12, color: '#606266', interval: 0, rotate: 30 },
+        axisLabel: {
+          fontSize: 12,
+          color: '#606266',
+          interval: 0,
+          margin: 12,
+          // 超过 4 字自动换两行显示，避免旋转遮挡
+          formatter: (v: string) => {
+            const arr = v.split('')
+            if (arr.length <= 4) return v
+            const mid = Math.ceil(arr.length / 2)
+            return arr.slice(0, mid).join('') + '\n' + arr.slice(mid).join('')
+          },
+        },
         axisLine: { lineStyle: { color: '#dcdfe6' } },
       },
       yAxis: {
