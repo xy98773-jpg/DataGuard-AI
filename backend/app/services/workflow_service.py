@@ -27,6 +27,12 @@ from app.trace import get_collector
 
 _NODE_ORDER = ["supervisor", "profiler", "inspector", "planner", "plan_validator", "risk", "approval", "execution", "validator", "reflection"]
 
+# 并发控制：最多同时运行 N 个治理任务（防止资源抢占）
+MAX_CONCURRENT_RUNS = 3
+_active_runs_lock = threading.Lock()
+_active_runs: set[str] = set()  # 当前正在执行的 run_id 集合
+_cancel_flags: dict[str, bool] = {}  # 取消标记：run_id → True 表示已取消
+
 
 class WorkflowService:
     def __init__(self) -> None:
@@ -40,6 +46,11 @@ class WorkflowService:
         info = self._datasets.get_info(dataset_id)
         if info is None:
             raise ValueError(f"dataset not found: {dataset_id}")
+
+        # 并发限制：超过上限则拒绝
+        with _active_runs_lock:
+            if len(_active_runs) >= MAX_CONCURRENT_RUNS:
+                raise RuntimeError(f"已达到最大并发任务数 {MAX_CONCURRENT_RUNS}，请等待其他任务完成或取消现有任务")
 
         run_id = f"run_{uuid4().hex[:10]}"
         with SessionLocal() as session:
@@ -61,10 +72,65 @@ class WorkflowService:
                 daemon=True,
                 name=f"dg-workflow-{run_id}",
             )
+            with _active_runs_lock:
+                _active_runs.add(run_id)
             thread.start()
         else:
+            with _active_runs_lock:
+                _active_runs.add(run_id)
             self._run(run_id, dataset_id, goal)
         return run_id
+
+    def cancel(self, run_id: str) -> bool:
+        """取消任务：仅 PENDING/WAITING_APPROVAL/RUNNING 状态可取消。
+
+        - PENDING：直接标记为 CANCELLED（线程还未真正开始）
+        - WAITING_APPROVAL：标记为 CANCELLED（审批队列不再处理）
+        - RUNNING：设置取消标记，线程在下一个节点检查时退出
+        """
+        with SessionLocal() as session:
+            row = session.get(WorkflowRun, run_id)
+            if row is None:
+                return False
+            if row.status in ("SUCCESS", "FAILED", "CANCELLED"):
+                return False  # 已终态，不可取消
+
+            row.status = "CANCELLED"
+            session.commit()
+
+            # 设置取消标记（RUNNING 状态线程会在节点间检查）
+            _cancel_flags[run_id] = True
+
+            # 从活跃集合移除
+            with _active_runs_lock:
+                _active_runs.discard(run_id)
+
+            logger.info("任务已取消: {}", run_id)
+            return True
+
+    def get_active_runs(self) -> list[dict]:
+        """返回当前所有运行中/等待中的任务列表。"""
+        with SessionLocal() as session:
+            rows = (
+                session.query(WorkflowRun)
+                .filter(WorkflowRun.status.in_(["PENDING", "RUNNING", "WAITING_APPROVAL"]))
+                .order_by(WorkflowRun.created_at.desc())
+                .all()
+            )
+            return [
+                {
+                    "run_id": r.id,
+                    "dataset_id": r.dataset_id,
+                    "status": r.status,
+                    "current_node": r.current_node,
+                    "created_at": r.created_at.isoformat() if r.created_at else "",
+                }
+                for r in rows
+            ]
+
+    def _is_cancelled(self, run_id: str) -> bool:
+        """检查任务是否被取消（节点间调用）。"""
+        return _cancel_flags.get(run_id, False)
 
     def get_status(self, run_id: str) -> dict:
         from app.models import TraceEvent
@@ -122,17 +188,17 @@ class WorkflowService:
     # ---- internals ----
 
     def _run(self, run_id: str, dataset_id: str, goal: str) -> None:
-        info = self._datasets.get_info(dataset_id)
-        source_type = info.source_type if info else "file"
-        ext = self._datasets.get_ext(dataset_id)
-        self._set_run(run_id, status="RUNNING", current_node="supervisor")
-        self._collector.emit(
-            run_id=run_id,
-            node="workflow",
-            event_type=EventType.WORKFLOW_START,
-            input={"dataset_id": dataset_id, "goal": goal},
-        )
         try:
+            info = self._datasets.get_info(dataset_id)
+            source_type = info.source_type if info else "file"
+            ext = self._datasets.get_ext(dataset_id)
+            self._set_run(run_id, status="RUNNING", current_node="supervisor")
+            self._collector.emit(
+                run_id=run_id,
+                node="workflow",
+                event_type=EventType.WORKFLOW_START,
+                input={"dataset_id": dataset_id, "goal": goal},
+            )
             initial: DataGovernanceState = {
                 "run_id": run_id,
                 "user_request": goal,
@@ -157,7 +223,18 @@ class WorkflowService:
                 "trace_id": run_id,
             }
             config = {"configurable": {"thread_id": run_id}}
+
+            # 检查是否被取消
+            if self._is_cancelled(run_id):
+                logger.info(f"workflow cancelled before start: {run_id}")
+                return
+
             result = self._graph.invoke(initial, config=config)
+
+            # 检查是否被取消
+            if self._is_cancelled(run_id):
+                logger.info(f"workflow cancelled after execution: {run_id}")
+                return
 
             payload = self._extract_interrupt_payload(result)
             if payload is not None:
@@ -199,6 +276,11 @@ class WorkflowService:
                 status="error",
             )
             self._set_run(run_id, status="FAILED")
+        finally:
+            # 清理：从活跃集合移除，清除取消标记
+            with _active_runs_lock:
+                _active_runs.discard(run_id)
+            _cancel_flags.pop(run_id, None)
 
     # ---- human-in-the-loop ----
 

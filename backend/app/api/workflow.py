@@ -26,7 +26,25 @@ def start_workflow(req: StartRequest) -> dict:
         run_id = _svc.start(req.dataset_id, req.goal)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        # 并发限制
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     return {"run_id": run_id, "status": "running"}
+
+
+@router.post("/workflow/{run_id}/cancel")
+def cancel_workflow(run_id: str) -> dict:
+    """取消任务（仅 PENDING/RUNNING/WAITING_APPROVAL 状态可取消）."""
+    success = _svc.cancel(run_id)
+    if not success:
+        raise HTTPException(status_code=400, detail="任务无法取消（可能已结束或不存在）")
+    return {"run_id": run_id, "status": "cancelled"}
+
+
+@router.get("/workflow/active")
+def get_active_workflows() -> dict:
+    """获取所有运行中/等待中的任务列表."""
+    return {"runs": _svc.get_active_runs()}
 
 
 @router.get("/workflow/{run_id}")

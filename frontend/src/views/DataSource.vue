@@ -2,9 +2,11 @@
 import { ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useRouter } from 'vue-router'
+import RunningTasks from '../components/RunningTasks.vue'
 
 const router = useRouter()
 const activeTab = ref('file')
+const activeTasksOpen = ref(false)
 
 // ---- 数据库数据源 ----
 const connForm = ref({
@@ -136,7 +138,14 @@ async function registerBatch() {
 <template>
   <div class="datasource-page">
     <el-card shadow="never">
-      <template #header>数据源</template>
+      <template #header>
+        <div class="ds-head">
+          <span>数据源</span>
+          <el-button size="small" type="warning" plain @click="activeTasksOpen = true">
+            <el-icon><Loading /></el-icon>&nbsp;运行中任务
+          </el-button>
+        </div>
+      </template>
       <el-tabs v-model="activeTab">
         <el-tab-pane label="文件" name="file">
           <el-empty description="上传 CSV / Excel / JSON 请前往「治理工作台」（左侧菜单）" :image-size="60" />
@@ -222,10 +231,16 @@ async function registerBatch() {
         </el-tab-pane>
       </el-tabs>
     </el-card>
+    <RunningTasks v-model:open="activeTasksOpen" />
   </div>
 </template>
 
 <style scoped>
+.ds-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
 .datasource-page {
   max-width: 1100px;
 }
