@@ -370,8 +370,8 @@ onUnmounted(stopPoll)
   <div class="workflow-page">
     <div class="wf-toolbar">
       <span class="wf-toolbar-title">治理工作台</span>
-      <el-button size="small" @click="trendOpen = true">
-        <el-icon><TrendCharts /></el-icon>&nbsp;质量趋势
+      <el-button type="primary" plain @click="trendOpen = true" class="trend-btn">
+        <el-icon style="font-size: 15px"><TrendCharts /></el-icon>&nbsp;质量趋势
       </el-button>
     </div>
     <el-card shadow="never" class="steps-card">
@@ -619,6 +619,10 @@ onUnmounted(stopPoll)
   font-size: 15px;
   font-weight: 600;
   color: #303133;
+}
+.trend-btn {
+  font-weight: 600;
+  padding: 9px 16px;
 }
 .steps-card {
   margin-bottom: 12px;

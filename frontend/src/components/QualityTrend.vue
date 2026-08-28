@@ -52,11 +52,13 @@ const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.l
   <el-dialog
     :model-value="props.open"
     @update:model-value="(v: boolean) => emit('update:open', v)"
-    title="📈 质量趋势（最近 {{ trend.length }} 次治理）"
     width="70%"
     align-center
     class="quality-trend-dialog"
   >
+    <template #header>
+      <span class="trend-title">📈 质量趋势（最近 {{ trend.length }} 次治理）</span>
+    </template>
     <div v-loading="loading">
       <template v-if="trend.length >= 2">
         <svg viewBox="0 0 800 220" class="trend-svg" preserveAspectRatio="xMidYMid meet">
@@ -101,30 +103,36 @@ const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.l
 </template>
 
 <style scoped>
+.trend-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: #303133;
+}
 .trend-svg {
   width: 100%;
-  height: 200px;
+  height: 210px;
   display: block;
 }
 .trend-svg .axis {
-  font-size: 11px;
-  fill: #909399;
+  font-size: 13px;
+  fill: #606266;
+  font-weight: 600;
 }
 .trend-svg .axis-label {
-  font-size: 10px;
-  fill: #909399;
+  font-size: 12px;
+  fill: #606266;
 }
 .trend-svg .score-end {
-  font-size: 13px;
+  font-size: 15px;
   font-weight: 700;
   fill: #409eff;
 }
 .trend-legend {
   display: flex;
   gap: 16px;
-  margin: 6px 0 10px;
-  font-size: 12px;
-  color: #606266;
+  margin: 8px 0 12px;
+  font-size: 13px;
+  color: #303133;
 }
 .trend-legend .lg::before {
   content: '';
@@ -147,6 +155,6 @@ const lastScore = computed(() => (trend.value.length ? trend.value[trend.value.l
 }
 .up-score {
   color: #67c23a;
-  font-weight: 600;
+  font-weight: 700;
 }
 </style>
