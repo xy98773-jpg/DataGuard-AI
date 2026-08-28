@@ -109,13 +109,18 @@ def list_datasets(
         # 每个数据集的最新一次运行状态（created_at 最大者）
         run_status: dict[str, str] = {}
         if ds_ids:
-            for run_id, ds_id, status in (
-                session.query(WorkflowRun.id, WorkflowRun.dataset_id, WorkflowRun.status)
+            # 取每个数据集**最近一次** run 的状态（按创建时间倒序，消除无排序导致的状态错乱）
+            latest_rows = (
+                session.query(WorkflowRun)
                 .filter(WorkflowRun.dataset_id.in_(ds_ids))
+                .order_by(WorkflowRun.created_at.desc())
                 .all()
-            ):
-                # 后查询到的（较新）覆盖旧值，等价于取最新 run 的状态
-                run_status[ds_id] = status
+            )
+            seen: set[str] = set()
+            for r in latest_rows:
+                if r.dataset_id not in seen:
+                    seen.add(r.dataset_id)
+                    run_status[r.dataset_id] = r.status
         # 每个数据集的问题总数（跨运行）
         issue_counts: dict[str, int] = {}
         if ds_ids:

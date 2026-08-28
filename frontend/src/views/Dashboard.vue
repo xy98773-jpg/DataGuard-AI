@@ -24,6 +24,7 @@ const STATUS_MAP: Record<string, { zh: string; type: 'success' | 'danger' | 'war
   WAITING_APPROVAL: { zh: '待审批', type: 'warning' },
   RUNNING: { zh: '运行中', type: 'primary' },
   PENDING: { zh: '排队中', type: 'info' },
+  CANCELLED: { zh: '已取消', type: 'info' },
 }
 
 async function loadStats() {

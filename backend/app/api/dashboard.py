@@ -18,7 +18,13 @@ router = APIRouter(tags=["dashboard"])
 def get_dashboard_stats() -> dict:
     """平台级统计：聚合指标 + 最近运行列表（含数据源类型与治理前后质量分）。"""
     with SessionLocal() as session:
-        total_runs = session.query(func.count(WorkflowRun.id)).scalar() or 0
+        # 运行总数排除 CANCELLED（取消的任务不计入运行记录）
+        total_runs = (
+            session.query(func.count(WorkflowRun.id))
+            .filter(WorkflowRun.status != "CANCELLED")
+            .scalar()
+            or 0
+        )
         succeeded = (
             session.query(func.count(WorkflowRun.id))
             .filter(WorkflowRun.status == "SUCCESS")
