@@ -66,6 +66,10 @@ function logout() {
           <el-icon><Setting /></el-icon>
           <span>模型设置</span>
         </el-menu-item>
+        <el-menu-item index="/system">
+          <el-icon><Monitor /></el-icon>
+          <span>系统状态</span>
+        </el-menu-item>
       </el-menu>
     </el-aside>
 

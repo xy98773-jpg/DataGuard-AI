@@ -27,6 +27,8 @@ _JSON_BLOCK = re.compile(r"\{.*\}", re.DOTALL)
 _CACHE_MAX = 128
 _cache: "OrderedDict[str, tuple[float, str, dict]]" = OrderedDict()
 _cache_lock = threading.Lock()
+_cache_hits = 0
+_cache_misses = 0
 
 
 def _cache_key(system: str, user: str) -> str:
@@ -36,16 +38,33 @@ def _cache_key(system: str, user: str) -> str:
 
 
 def _cache_get(key: str):
+    global _cache_hits, _cache_misses
     with _cache_lock:
         item = _cache.get(key)
         if item is None:
+            _cache_misses += 1
             return None
         ts, payload, usage = item
         if time.time() - ts > 3600:
             _cache.pop(key, None)
+            _cache_misses += 1
             return None
         _cache.move_to_end(key)
+        _cache_hits += 1
         return payload, usage
+
+
+def cache_stats() -> dict:
+    """返回 LLM 结果缓存统计（进程内计数）。"""
+    with _cache_lock:
+        total = _cache_hits + _cache_misses
+        return {
+            "hits": _cache_hits,
+            "misses": _cache_misses,
+            "hit_rate": round(_cache_hits / total * 100, 1) if total else 0.0,
+            "size": len(_cache),
+            "max_size": _CACHE_MAX,
+        }
 
 
 def _cache_put(key: str, payload: str, usage: dict) -> None:
