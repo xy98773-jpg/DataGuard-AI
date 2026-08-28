@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import AgentDetail from '../components/AgentDetail.vue'
 import QualityTrend from '../components/QualityTrend.vue'
 import ReportDrawer from '../components/ReportDrawer.vue'
+import RunningTasks from '../components/RunningTasks.vue'
 import TracePanel from '../components/TracePanel.vue'
 import WorkflowGraph from '../components/WorkflowGraph.vue'
 import { useAppStore } from '../stores/app'
@@ -227,6 +228,8 @@ function closeReport() {
 
 // 质量趋势弹窗（历史治理评分走势）
 const trendOpen = ref(false)
+// 运行中任务弹窗（治理工作台发起任务，这里查看/取消最直观）
+const activeTasksOpen = ref(false)
 
 // 导出治理报告（HTML / PDF）——工作台结果区
 async function exportReport(fmt: 'pdf' | 'html') {
@@ -370,9 +373,14 @@ onUnmounted(stopPoll)
   <div class="workflow-page">
     <div class="wf-toolbar">
       <span class="wf-toolbar-title">治理工作台</span>
-      <el-button type="primary" plain @click="trendOpen = true" class="trend-btn">
-        <el-icon style="font-size: 15px"><TrendCharts /></el-icon>&nbsp;质量趋势
-      </el-button>
+      <div class="wf-toolbar-actions">
+        <el-button type="warning" @click="trendOpen = true" class="toolbar-btn">
+          <el-icon style="font-size: 16px"><TrendCharts /></el-icon>&nbsp;质量趋势
+        </el-button>
+        <el-button type="danger" @click="activeTasksOpen = true" class="toolbar-btn toolbar-btn-danger">
+          <el-icon style="font-size: 16px"><Loading /></el-icon>&nbsp;运行中任务
+        </el-button>
+      </div>
     </div>
     <el-card shadow="never" class="steps-card">
       <el-steps
@@ -602,6 +610,7 @@ onUnmounted(stopPoll)
       @close="closeReport"
     />
     <QualityTrend v-model:open="trendOpen" />
+    <RunningTasks v-model:open="activeTasksOpen" />
   </div>
 </template>
 
@@ -620,9 +629,17 @@ onUnmounted(stopPoll)
   font-weight: 600;
   color: #303133;
 }
-.trend-btn {
-  font-weight: 600;
-  padding: 9px 16px;
+.wf-toolbar-actions {
+  display: flex;
+  gap: 10px;
+}
+.toolbar-btn {
+  font-weight: 700;
+  padding: 10px 18px;
+  font-size: 14px;
+}
+.toolbar-btn-danger {
+  box-shadow: 0 2px 8px rgba(245, 108, 108, 0.35);
 }
 .steps-card {
   margin-bottom: 12px;
