@@ -303,6 +303,12 @@ class WorkflowService:
         if not requests:
             return
         with SessionLocal() as session:
+            # 幂等：先清理该 run 尚未处理的 PENDING 旧行（已 APPROVED/REJECTED 保留，审批历史可追溯），
+            # 避免同一次运行多次暂停时审批列表重复累积
+            session.query(ApprovalRow).filter(
+                ApprovalRow.run_id == run_id,
+                ApprovalRow.status == "PENDING",
+            ).delete()
             for req in requests:
                 session.add(
                     ApprovalRow(

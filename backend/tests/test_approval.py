@@ -70,6 +70,35 @@ def test_reject_ends_run():
     assert wf.get_status(run_id)["status"] == "FAILED"
 
 
+def test_save_pending_approvals_idempotent():
+    """同一 run 多次暂停时，_save_pending_approvals 只保留最新一批 PENDING（旧行清理，不累积重复）."""
+    from app.models import Approval as ApprovalRow
+    from app.storage.database import SessionLocal
+
+    run_id = "run_idem_test"
+    payload1 = {"approval_requests": [
+        {"id": "delete_duplicate__customer_id", "tool": "delete_duplicate", "column": "customer_id", "affected_rows": 4, "risk": "HIGH"},
+        {"id": "fill_missing__email", "tool": "fill_missing", "column": "email", "affected_rows": 2, "risk": "MEDIUM"},
+    ]}
+    payload2 = {"approval_requests": [
+        {"id": "normalize_phone__phone", "tool": "normalize_phone", "column": "phone", "affected_rows": 8, "risk": "LOW"},
+    ]}
+
+    # 第一次暂停：插入 2 条
+    WorkflowService._save_pending_approvals(run_id, payload1)
+    with SessionLocal() as session:
+        n1 = session.query(ApprovalRow).filter(ApprovalRow.run_id == run_id, ApprovalRow.status == "PENDING").count()
+    assert n1 == 2
+
+    # 第二次暂停：旧 PENDING 清理，只保留新的 1 条
+    WorkflowService._save_pending_approvals(run_id, payload2)
+    with SessionLocal() as session:
+        pending = session.query(ApprovalRow).filter(ApprovalRow.run_id == run_id, ApprovalRow.status == "PENDING").all()
+        assert len(pending) == 1
+        op = __import__("json").loads(pending[0].operation)
+        assert op["id"] == "normalize_phone__phone"
+
+
 def test_submit_partial_decisions_rejects_some():
     """逐条审批：部分批准 + 部分拒绝时，被拒绝的操作不得执行."""
     from app.models import Execution as ExecutionRow

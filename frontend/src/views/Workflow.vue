@@ -18,6 +18,7 @@ const { dataset, runStatus, issues, plan, validation, traceEvents, selectedNode,
 const uploading = ref(false)
 const uploadName = ref('')
 const datasets = ref<any[]>([])
+const usageStats = ref<any>(null) // Token 消耗统计：{ usage: {node: n}, total }
 let timer: number | null = null
 
 const statusZh = computed(() => enZh(runStatus.value?.status, STATUS_ZH))
@@ -61,9 +62,15 @@ async function onUpload(file: File) {
   if (uploadName.value.trim()) fd.append('name', uploadName.value.trim())
   try {
     const resp = await fetch('/api/dataset/upload', { method: 'POST', body: fd })
-    const body = await resp.json()
+    // 响应体可能为空/非 JSON（如后端异常退出），先做安全解析，再给友好提示
+    let body: any = null
+    try {
+      body = await resp.json()
+    } catch {
+      throw new Error(resp.ok ? '服务响应异常，请重试' : `后端服务异常（HTTP ${resp.status}），请确认 backend 已启动`)
+    }
     if (!resp.ok) {
-      ElMessage.error(body.detail || '上传失败')
+      ElMessage.error(body?.detail || `上传失败（HTTP ${resp.status}）`)
       return
     }
     store.dataset = body
@@ -75,7 +82,12 @@ async function onUpload(file: File) {
     await loadDatasets()
     ElMessage.success(`已上传 ${body.filename}（${body.rows} 行）`)
   } catch (e: any) {
-    ElMessage.error(String(e))
+    // 网络层失败（fetch 抛 TypeError）＝后端不可用；业务失败用后端返回的消息
+    if (e instanceof TypeError || String(e?.message ?? '').toLowerCase().includes('fetch')) {
+      ElMessage.error('无法连接后端服务，请确认 backend 已启动（http://127.0.0.1:8000）')
+    } else {
+      ElMessage.error(e?.message || '上传失败，请重试')
+    }
   } finally {
     uploading.value = false
   }
@@ -85,14 +97,28 @@ async function onUpload(file: File) {
 
 async function startGovernance() {
   if (!store.dataset) return
-  const resp = await fetch('/api/workflow/start', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ dataset_id: store.dataset.dataset_id, goal: '数据质量治理' }),
-  })
-  const body = await resp.json()
-  if (!resp.ok) {
-    ElMessage.error(body.detail || '启动失败')
+  let body: any
+  try {
+    const resp = await fetch('/api/workflow/start', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ dataset_id: store.dataset.dataset_id, goal: '数据质量治理' }),
+    })
+    try {
+      body = await resp.json()
+    } catch {
+      throw new Error(resp.ok ? '服务响应异常，请重试' : `后端服务异常（HTTP ${resp.status}），请确认 backend 已启动`)
+    }
+    if (!resp.ok) {
+      ElMessage.error(body?.detail || `启动失败（HTTP ${resp.status}）`)
+      return
+    }
+  } catch (e: any) {
+    if (e instanceof TypeError || String(e?.message ?? '').toLowerCase().includes('fetch')) {
+      ElMessage.error('无法连接后端服务，请确认 backend 已启动（http://127.0.0.1:8000）')
+    } else {
+      ElMessage.error(e?.message || '启动失败，请重试')
+    }
     return
   }
   store.activeRunId = body.run_id
@@ -107,13 +133,15 @@ async function poll() {
   if (!store.activeRunId) return
   try {
     // 并行拉取状态 + trace，事件流实时累积（不再等流程结束）
-    const [statusResp, traceResp] = await Promise.all([
+    const [statusResp, traceResp, usageResp] = await Promise.all([
       fetch(`/api/workflow/${store.activeRunId}`),
       fetch(`/api/trace/${store.activeRunId}`),
+      fetch(`/api/trace/${store.activeRunId}/usage`),
     ])
     const status = await statusResp.json()
     store.runStatus = status
     store.traceEvents = (await traceResp.json()).events ?? []
+    usageStats.value = await usageResp.json()
     if (status.status === 'SUCCESS' || status.status === 'FAILED') {
       stopPoll()
       await loadResults()
@@ -126,18 +154,20 @@ async function poll() {
 
 async function loadResults() {
   const dsId = store.dataset?.dataset_id || store.activeDatasetId
-  const [issuesResp, planResp, validationResp, traceResp, outputsResp] = await Promise.all([
+  const [issuesResp, planResp, validationResp, traceResp, outputsResp, usageResp] = await Promise.all([
     fetch(`/api/issues/${store.activeRunId}`),
     fetch(`/api/plan/${store.activeRunId}`),
     fetch(`/api/validation/${store.activeRunId}`),
     fetch(`/api/trace/${store.activeRunId}`),
     dsId ? fetch(`/api/dataset/${dsId}/outputs`) : Promise.resolve({ json: () => ({}) }),
+    fetch(`/api/trace/${store.activeRunId}/usage`),
   ])
   store.issues = (await issuesResp.json()).issues ?? []
   store.plan = (await planResp.json()).actions ?? []
   store.validation = await validationResp.json()
   store.traceEvents = (await traceResp.json()).events ?? []
   outputs.value = await outputsResp.json()
+  usageStats.value = await usageResp.json()
 }
 
 function onNodeClick(nodeId: string) {
@@ -409,6 +439,24 @@ onUnmounted(stopPoll)
           <template #header>追踪详情</template>
           <el-empty v-if="!activeRunId" description="运行工作流后查看真实追踪" :image-size="60" />
           <template v-else>
+            <!-- Token 消耗统计（按 Agent 汇总，来自真实 trace） -->
+            <div v-if="usageStats?.total" class="token-stats">
+              <div class="token-head">
+                <span>Token 消耗</span>
+                <span class="token-total">合计 {{ usageStats.total }} tokens</span>
+              </div>
+              <div v-for="(n, node) in usageStats.usage" :key="node" class="token-row">
+                <span class="token-name">{{ enZh(String(node), NODE_ZH) }}</span>
+                <el-progress
+                  class="token-bar"
+                  :percentage="Math.round((n / (usageStats.total || 1)) * 100)"
+                  :stroke-width="8"
+                  :show-text="false"
+                  color="#409eff"
+                />
+                <span class="token-num">{{ n }}</span>
+              </div>
+            </div>
             <div class="trace-section">
               <div class="section-title">事件流</div>
               <TracePanel :events="traceEvents" />
@@ -574,6 +622,49 @@ onUnmounted(stopPoll)
 }
 .trace-section {
   margin-bottom: 4px;
+}
+.token-stats {
+  background: #f5f7fa;
+  border: 1px solid #e4e7ed;
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin-bottom: 12px;
+}
+.token-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 13px;
+  font-weight: 600;
+  color: #303133;
+  margin-bottom: 8px;
+}
+.token-total {
+  color: #409eff;
+  font-weight: 700;
+}
+.token-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 5px;
+}
+.token-name {
+  width: 72px;
+  font-size: 12px;
+  color: #606266;
+  flex-shrink: 0;
+}
+.token-bar {
+  flex: 1;
+}
+.token-num {
+  width: 48px;
+  text-align: right;
+  font-size: 12px;
+  font-family: monospace;
+  color: #303133;
+  flex-shrink: 0;
 }
 .section-title {
   font-size: 13px;

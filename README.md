@@ -52,6 +52,7 @@
 6. **Risk Engine**：LOW 自动执行；MEDIUM/HIGH 进入审批
 7. **Approval Center（逐条审批）**：每条高风险操作独立展示（操作编号/影响行数/变更预览），逐条选择「批准（执行）」或「拒绝（跳过）」，全部处理后点「提交审批结果」→ 工作流仅执行批准的操作，拒绝的自动跳过
 8. **Validator**：Quality Score Before 93.93 → After 94.73（PASS）；完整 Agent 执行链路在 Trace 中可回放
+9. **追踪详情**：事件流实时累积（每事件含耗时/Token）+ **Token 消耗统计卡片**（按 Agent 汇总 supervisor/profiler/inspector/planner + 合计，来自真实 usage）
 
 ## 测试数据
 

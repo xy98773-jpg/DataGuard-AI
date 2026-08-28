@@ -28,13 +28,25 @@ const webLoading = ref(false)
 const webResults = ref<any[]>([])
 
 async function api(path: string, body: any) {
-  const resp = await fetch(`/api/${path}`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  const data = await resp.json()
-  if (!resp.ok) throw new Error(data.detail || '请求失败')
+  // 统一请求封装：区分「后端不可用（网络层失败）」与「业务失败（后端返回错误）」，并安全解析 JSON 响应
+  let resp: Response
+  try {
+    resp = await fetch(`/api/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+  } catch {
+    throw new Error('无法连接后端服务，请确认 backend 已启动')
+  }
+  let data: any = null
+  try {
+    data = await resp.json()
+  } catch {
+    // 响应体为空/非 JSON：通常是后端异常退出或网关问题
+    throw new Error(resp.ok ? '服务响应异常，请重试' : `后端服务异常（HTTP ${resp.status}）`)
+  }
+  if (!resp.ok) throw new Error(data?.detail || `请求失败（HTTP ${resp.status}）`)
   return data
 }
 
