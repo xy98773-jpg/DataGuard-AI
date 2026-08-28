@@ -30,13 +30,17 @@ def get_system_stats() -> dict:
         datasets = session.query(func.count(Dataset.id)).scalar() or 0
 
         # 平均运行耗时：按 run 聚合 trace_events.latency 总和，再取平均（仅成功/失败 run）
+        # 过滤单事件 latency >= 300s 的脏数据（历史"卡死"任务挂起记录，LLM 超时上限 180s）
         rows = (
             session.query(
                 WorkflowRun.id,
                 func.sum(TraceEvent.latency),
             )
             .join(TraceEvent, TraceEvent.run_id == WorkflowRun.id)
-            .filter(WorkflowRun.status.in_(["SUCCESS", "FAILED"]))
+            .filter(
+                WorkflowRun.status.in_(["SUCCESS", "FAILED"]),
+                TraceEvent.latency < 300,
+            )
             .group_by(WorkflowRun.id)
             .all()
         )
