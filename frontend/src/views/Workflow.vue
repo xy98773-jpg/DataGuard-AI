@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import AgentDetail from '../components/AgentDetail.vue'
+import QualityTrend from '../components/QualityTrend.vue'
 import ReportDrawer from '../components/ReportDrawer.vue'
 import TracePanel from '../components/TracePanel.vue'
 import WorkflowGraph from '../components/WorkflowGraph.vue'
@@ -224,6 +225,9 @@ function closeReport() {
   store.reportDrawerOpen = false
 }
 
+// 质量趋势弹窗（历史治理评分走势）
+const trendOpen = ref(false)
+
 // 导出治理报告（HTML / PDF）——工作台结果区
 async function exportReport(fmt: 'pdf' | 'html') {
   if (!activeRunId.value) return
@@ -364,6 +368,12 @@ onUnmounted(stopPoll)
 
 <template>
   <div class="workflow-page">
+    <div class="wf-toolbar">
+      <span class="wf-toolbar-title">治理工作台</span>
+      <el-button size="small" @click="trendOpen = true">
+        <el-icon><TrendCharts /></el-icon>&nbsp;质量趋势
+      </el-button>
+    </div>
     <el-card shadow="never" class="steps-card">
       <el-steps
         :active="steps.findIndex((_, i) => stepStatus(i) === 'process') === -1 ? steps.length : steps.findIndex((_, i) => stepStatus(i) === 'process')"
@@ -591,12 +601,24 @@ onUnmounted(stopPoll)
       :dataset="dataset"
       @close="closeReport"
     />
+    <QualityTrend v-model:open="trendOpen" />
   </div>
 </template>
 
 <style scoped>
 .workflow-page {
   max-width: 1500px;
+}
+.wf-toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+.wf-toolbar-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: #303133;
 }
 .steps-card {
   margin-bottom: 12px;
