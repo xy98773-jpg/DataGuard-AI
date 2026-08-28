@@ -1,3 +1,5 @@
+![CI](https://github.com/xy98773-jpg/DataGuard-AI/actions/workflows/ci.yml/badge.svg)
+
 # DataGuard AI
 
 基于 LangGraph 的企业级数据治理 Agent 平台（Enterprise Data Governance Agent Platform）。
