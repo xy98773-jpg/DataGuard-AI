@@ -2,7 +2,7 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import AgentDetail from '../components/AgentDetail.vue'
 import ReportDrawer from '../components/ReportDrawer.vue'
 import TracePanel from '../components/TracePanel.vue'
@@ -32,11 +32,12 @@ const currentNodeZh = computed(() => {
 
 async function loadDatasets() {
   try {
-    const resp = await fetch('/api/dataset/list')
+    const resp = await fetch('/api/dataset/list?limit=50')
     const body = await resp.json()
     datasets.value = (body.datasets ?? []).map((d: any) => ({
       dataset_id: d.id,
       filename: d.filename,
+      name: d.name || d.filename,  // 自定义名（上传时命名或事后改名）
       rows: d.row_count,
       source_type: d.source_type,
     }))
@@ -55,10 +56,50 @@ function selectDataset(d: any) {
   ElMessage.success(`已选择数据集：${d.filename}`)
 }
 
-async function onUpload(file: File) {
+// 事后改名：历史数据集列表可直接改显示名（首页/问题中心同步生效）
+async function renameDataset(d: any) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `为数据集「${d.name}」设置新名称：`,
+      '重命名数据集',
+      { inputValue: d.name, confirmButtonText: '保存', cancelButtonText: '取消' },
+    )
+    const newName = (value ?? '').trim()
+    if (!newName) {
+      ElMessage.warning('名称不能为空')
+      return
+    }
+    const resp = await fetch(`/api/dataset/${d.dataset_id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      ElMessage.error(err?.detail || '重命名失败')
+      return
+    }
+    ElMessage.success(`已重命名为「${newName}」`)
+    await loadDatasets()  // 刷新历史列表
+    if (store.dataset?.dataset_id === d.dataset_id) store.dataset = { ...store.dataset, name: newName }
+  } catch {
+    /* 用户取消 */
+  }
+}
+
+// ---- 两段式上传：先选文件暂存 → 填名（可选）→ 点「开始上传」才提交（文件+name 一起走）----
+const pendingFile = ref<File | null>(null)
+
+function onFileChange(f: any) {
+  // 只暂存，不立即上传——避免「先选文件后填名」导致 name 丢失
+  pendingFile.value = f?.raw ?? null
+}
+
+async function onUpload() {
+  if (!pendingFile.value) return
   uploading.value = true
   const fd = new FormData()
-  fd.append('file', file)
+  fd.append('file', pendingFile.value)
   if (uploadName.value.trim()) fd.append('name', uploadName.value.trim())
   try {
     const resp = await fetch('/api/dataset/upload', { method: 'POST', body: fd })
@@ -80,7 +121,8 @@ async function onUpload(file: File) {
     outputs.value = null  // 清除上一数据集的治理成果
     stopPoll()
     await loadDatasets()
-    ElMessage.success(`已上传 ${body.filename}（${body.rows} 行）`)
+    pendingFile.value = null  // 上传成功清空待上传文件
+    ElMessage.success(`已上传 ${body.name || body.filename}（${body.rows} 行）`)
   } catch (e: any) {
     // 网络层失败（fetch 抛 TypeError）＝后端不可用；业务失败用后端返回的消息
     if (e instanceof TypeError || String(e?.message ?? '').toLowerCase().includes('fetch')) {
@@ -296,18 +338,28 @@ onUnmounted(stopPoll)
             :auto-upload="false"
             :show-file-list="false"
             accept=".csv,.xlsx,.xls,.json"
-            :on-change="(f: any) => onUpload(f.raw)"
+            :on-change="onFileChange"
             :disabled="uploading"
           >
             <el-icon class="el-icon--upload"><UploadFilled /></el-icon>
-            <div class="el-upload__text">拖拽文件到此处，或 <em>点击上传</em></div>
+            <div class="el-upload__text">拖拽文件到此处，或 <em>点击选择</em></div>
             <template #tip>
               <div class="el-upload__tip">支持 CSV / Excel / JSON</div>
             </template>
           </el-upload>
 
+          <!-- 两段式：已选文件提示 + 开始上传按钮（点上传时才把文件与名称一起提交） -->
+          <div v-if="pendingFile" class="pending-file">
+            📎 已选择：{{ pendingFile.name }}
+            <el-button link type="danger" :disabled="uploading" @click="pendingFile = null">移除</el-button>
+          </div>
+          <el-button type="primary" size="large" class="upload-btn" :loading="uploading" :disabled="!pendingFile" @click="onUpload">
+            {{ pendingFile ? '开始上传' : '请先选择文件' }}
+          </el-button>
+
           <el-descriptions v-if="dataset" :column="1" border class="dataset-info" size="small">
             <el-descriptions-item label="数据集 ID">{{ dataset.dataset_id }}</el-descriptions-item>
+            <el-descriptions-item label="显示名">{{ dataset.name || dataset.filename }}</el-descriptions-item>
             <el-descriptions-item label="文件名">{{ dataset.filename }}</el-descriptions-item>
             <el-descriptions-item label="行数">{{ dataset.rows }}</el-descriptions-item>
             <el-descriptions-item label="列数">{{ dataset.columns ?? '-' }}</el-descriptions-item>
@@ -344,8 +396,14 @@ onUnmounted(stopPoll)
               :class="{ active: dataset?.dataset_id === d.dataset_id }"
               @click="selectDataset(d)"
             >
-              <span class="history-name">{{ d.filename }}</span>
-              <span class="history-meta">{{ d.rows }} 行</span>
+              <div class="history-main">
+                <span class="history-name">{{ d.name }}</span>
+                <span class="history-file">{{ d.filename }}</span>
+              </div>
+              <span class="history-meta">
+                {{ d.rows }} 行
+                <el-button link type="warning" size="small" title="重命名" @click.stop="renameDataset(d)">改名</el-button>
+              </span>
             </div>
           </div>
         </el-card>
@@ -514,6 +572,22 @@ onUnmounted(stopPoll)
 }
 .dataset-info {
   margin-top: 16px;
+}
+.pending-file {
+  margin-top: 10px;
+  font-size: 13px;
+  color: #606266;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #f5f7fa;
+  border: 1px dashed #c0c4cc;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.upload-btn {
+  margin-top: 10px;
+  width: 100%;
 }
 .start-btn {
   margin-top: 16px;

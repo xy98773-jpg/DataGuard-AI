@@ -5,7 +5,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from app.models import Dataset
+from app.models import Dataset, WorkflowRun
 from app.schemas.dataset import DatasetInfo
 from app.storage.database import SessionLocal
 from app.storage.object_store import get_object_storage
@@ -116,6 +116,71 @@ class DatasetService:
             if row is None or row.source_type != "database":
                 return None
             return json.loads(row.storage_path)
+
+    def rename(self, dataset_id: str, name: str) -> DatasetInfo | None:
+        """修改数据集显示名（事后改名）——首页/工作台/问题中心立即生效.
+
+        校验：数据集存在 + 新名称非空（去掉首尾空白）。返回更新后的 DatasetInfo。
+        """
+        name = (name or "").strip()
+        if not name:
+            raise ValueError("name must not be empty")
+        with SessionLocal() as session:
+            row = session.get(Dataset, dataset_id)
+            if row is None:
+                return None
+            row.name = name
+            session.commit()
+        logger.info(f"dataset renamed: {dataset_id} -> {name}")
+        return self.get_info(dataset_id)
+
+    def delete_dataset(self, dataset_id: str) -> bool:
+        """删除数据集：数据库记录 + 对象存储文件 + 该数据集全部运行历史.
+
+        级联删除：workflow_runs -> issues / cleaning_plans / executions / validations /
+        trace_events / approvals（按 run_id）；dataset_profiles / datasets（按 dataset_id）；
+        object storage 中 original.* 与 outputs/*。返回是否删除了某条记录。
+        """
+        from app.models import (  # 局部导入避免循环依赖
+            Approval as ApprovalRow,
+            CleaningPlan as CleaningPlanRow,
+            DatasetProfile as ProfileRow,
+            Execution as ExecutionRow,
+            Issue as IssueRow,
+            TraceEvent as TraceEventRow,
+            Validation as ValidationRow,
+        )
+
+        with SessionLocal() as session:
+            row = session.get(Dataset, dataset_id)
+            if row is None:
+                return False
+            storage_path = row.storage_path or ""
+            run_ids = [r[0] for r in session.query(WorkflowRun.id).filter(WorkflowRun.dataset_id == dataset_id).all()]
+
+            if run_ids:
+                session.query(IssueRow).filter(IssueRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(CleaningPlanRow).filter(CleaningPlanRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(ExecutionRow).filter(ExecutionRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(ValidationRow).filter(ValidationRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(TraceEventRow).filter(TraceEventRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(ApprovalRow).filter(ApprovalRow.run_id.in_(run_ids)).delete(synchronize_session=False)
+                session.query(WorkflowRun).filter(WorkflowRun.dataset_id == dataset_id).delete(synchronize_session=False)
+            session.query(ProfileRow).filter(ProfileRow.dataset_id == dataset_id).delete(synchronize_session=False)
+            session.delete(row)
+            session.commit()
+
+        # 删除对象存储文件（原始文件 + 治理产物）
+        storage = get_object_storage()
+        ext = storage_path.rsplit(".", 1)[-1].lower() if storage_path and "." in storage_path else "csv"
+        for key in (f"datasets/{dataset_id}/original.{ext}", f"outputs/{dataset_id}/cleaned.csv", f"outputs/{dataset_id}/validation_report.json"):
+            try:
+                if storage.exists(key):
+                    storage.delete(key)
+            except Exception as exc:  # noqa: BLE001
+                logger.warning(f"failed to delete storage key {key}: {exc}")
+        logger.info(f"dataset deleted: {dataset_id} ({len(run_ids)} runs cleaned)")
+        return True
 
     def get_ext(self, dataset_id: str) -> str:
         with SessionLocal() as session:

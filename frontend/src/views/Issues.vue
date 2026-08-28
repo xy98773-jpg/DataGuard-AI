@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { enZh, ISSUE_TYPE_ZH, SEVERITY_ZH } from '../utils/i18n'
 
 const route = useRoute()
@@ -22,6 +23,7 @@ const groups = computed(() => {
   return [...map.entries()].map(([name, list]) => ({
     name,
     file: list[0]?.dataset_file && list[0]?.dataset_file !== name ? list[0].dataset_file : '',
+    datasetId: list[0]?.dataset_id ?? '',
     count: list.length,
     high: list.filter((i) => i.severity === 'HIGH').length,
     medium: list.filter((i) => i.severity === 'MEDIUM').length,
@@ -47,6 +49,29 @@ async function loadDatasets() {
   } catch {
     datasets.value = []
   }
+}
+
+// 删除数据集（连带其问题与运行历史，二次确认）
+async function deleteDataset(g: any) {
+  if (!g.datasetId) return
+  try {
+    await ElMessageBox.confirm(
+      `确定删除数据集「${g.name}」吗？\n将同时删除它的 ${g.count} 条问题记录与全部运行历史，且不可恢复。`,
+      '删除数据集',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return  // 用户取消
+  }
+  const resp = await fetch(`/api/dataset/${g.datasetId}`, { method: 'DELETE' })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    ElMessage.error(err?.detail || '删除失败')
+    return
+  }
+  ElMessage.success(`已删除数据集「${g.name}」`)
+  await load()  // 刷新问题列表（该分组消失）
+  await loadDatasets()  // 刷新数据集下拉
 }
 
 async function load() {
@@ -113,6 +138,7 @@ onMounted(async () => {
                 <el-tag size="small" type="warning" effect="plain">中 {{ g.medium }}</el-tag>
                 <el-tag size="small" type="info" effect="plain">低 {{ g.low }}</el-tag>
                 <span class="group-count">共 {{ g.count }} 个问题</span>
+                <el-button link type="danger" size="small" @click.stop="deleteDataset(g)">删除数据集</el-button>
               </span>
             </div>
           </template>

@@ -131,6 +131,32 @@ def list_datasets(
         }
 
 
+@router.patch("/dataset/{dataset_id}")
+def rename_dataset(dataset_id: str, body: dict) -> dict:
+    """事后改名：更新数据集显示名（首页/工作台/问题中心立即生效）."""
+    name = (body or {}).get("name", "")
+    try:
+        info = _svc.rename(dataset_id, name)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if info is None:
+        raise HTTPException(status_code=404, detail="dataset not found")
+    return {
+        "dataset_id": info.id,
+        "filename": info.filename,
+        "name": info.name,
+    }
+
+
+@router.delete("/dataset/{dataset_id}")
+def delete_dataset(dataset_id: str) -> dict:
+    """删除数据集：数据库记录 + 文件 + 该数据集全部运行历史（破坏性操作，前端需二次确认）."""
+    deleted = _svc.delete_dataset(dataset_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail="dataset not found")
+    return {"dataset_id": dataset_id, "deleted": True}
+
+
 @router.post("/dataset/upload")
 async def upload_dataset(file: UploadFile = File(...), name: str | None = Form(default=None)) -> dict:
     content = await file.read()

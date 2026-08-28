@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import { ElMessage, ElMessageBox } from 'element-plus'
 
 const router = useRouter()
 
@@ -68,6 +69,58 @@ function goGovernance(row: any) {
 
 function goIssues(row: any) {
   router.push({ path: '/issues', query: { dataset: row.id } })
+}
+
+// 事后改名：上传时没来得及命名也可以随时改（首页/工作台/问题中心立即生效）
+async function renameDataset(row: any) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `为数据集「${row.name}」设置新名称：`,
+      '重命名数据集',
+      { inputValue: row.name, confirmButtonText: '保存', cancelButtonText: '取消' },
+    )
+    const newName = (value ?? '').trim()
+    if (!newName) {
+      ElMessage.warning('名称不能为空')
+      return
+    }
+    const resp = await fetch(`/api/dataset/${row.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: newName }),
+    })
+    if (!resp.ok) {
+      const err = await resp.json().catch(() => ({}))
+      ElMessage.error(err?.detail || '重命名失败')
+      return
+    }
+    ElMessage.success(`已重命名为「${newName}」`)
+    await loadDatasets()  // 刷新列表（问题中心下次加载自动用新名）
+  } catch {
+    /* 用户取消 */
+  }
+}
+
+// 删除数据集（破坏性操作：连带删除该数据集的运行历史与文件，需二次确认）
+async function deleteDataset(row: any) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除数据集「${row.name}」吗？\n将同时删除它的 ${row.issue_count ?? 0} 条问题记录、全部运行历史与文件，且不可恢复。`,
+      '删除数据集',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消', confirmButtonClass: 'el-button--danger' },
+    )
+  } catch {
+    return  // 用户取消
+  }
+  const resp = await fetch(`/api/dataset/${row.id}`, { method: 'DELETE' })
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({}))
+    ElMessage.error(err?.detail || '删除失败')
+    return
+  }
+  ElMessage.success(`已删除数据集「${row.name}」`)
+  await loadDatasets()
+  await loadStats()  // 数据集数/问题数统计同步刷新
 }
 
 const statCards = [
@@ -160,10 +213,16 @@ onMounted(() => {
             <el-badge :value="row.issue_count ?? 0" :hidden="!row.issue_count" type="danger" />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="150">
+        <el-table-column label="操作" width="250">
           <template #default="{ row }">
             <el-button link type="primary" @click="goGovernance(row)">治理 →</el-button>
             <el-button link @click="goIssues(row)">问题</el-button>
+            <el-button link type="warning" @click="renameDataset(row)">
+              <el-icon><EditPen /></el-icon> 改名
+            </el-button>
+            <el-button link type="danger" @click="deleteDataset(row)">
+              <el-icon><Delete /></el-icon> 删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

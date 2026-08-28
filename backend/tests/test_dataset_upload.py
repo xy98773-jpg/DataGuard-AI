@@ -95,3 +95,59 @@ def test_dataset_list_has_name_status_and_search(client):
     # source_type 筛选
     only_file = client.get("/api/dataset/list?source_type=file").json()
     assert all(d["source_type"] == "file" for d in only_file["datasets"])
+
+
+def test_dataset_rename_updates_name_everywhere(client):
+    """事后改名：PATCH 更新 name，list/issues 立即生效；空名拒绝；不存在 404。"""
+    with open(DEMO_CSV, "rb") as f:
+        r = client.post(
+            "/api/dataset/upload",
+            files={"file": ("customer.csv", f, "text/csv")},
+        )
+    ds_id = r.json()["dataset_id"]
+
+    # 改名
+    resp = client.patch(f"/api/dataset/{ds_id}", json={"name": "改名后的数据集"})
+    assert resp.status_code == 200
+    assert resp.json()["name"] == "改名后的数据集"
+
+    # list 立即生效
+    item = next(d for d in client.get("/api/dataset/list?limit=50").json()["datasets"] if d["id"] == ds_id)
+    assert item["name"] == "改名后的数据集"
+
+    # 跑一次治理 → issues 的 dataset_name 也显示新名
+    client.post("/api/workflow/start", json={"dataset_id": ds_id})
+    issues = client.get(f"/api/issues?dataset_id={ds_id}").json().get("issues", [])
+    assert issues and all(i["dataset_name"] == "改名后的数据集" for i in issues)
+
+    # 空名 → 400；不存在 → 404
+    assert client.patch(f"/api/dataset/{ds_id}", json={"name": "   "}).status_code == 400
+    assert client.patch("/api/dataset/ds_not_found_1", json={"name": "x"}).status_code == 404
+
+
+def test_dataset_delete_cascades(client):
+    """删除数据集：DB 记录 + 运行历史级联删除；list/issues 消失；不存在 404。"""
+    with open(DEMO_CSV, "rb") as f:
+        r = client.post(
+            "/api/dataset/upload",
+            files={"file": ("customer.csv", f, "text/csv")},
+            data={"name": "待删除数据集"},
+        )
+    ds_id = r.json()["dataset_id"]
+
+    # 跑一次治理产生 issues/runs
+    client.post("/api/workflow/start", json={"dataset_id": ds_id})
+    assert client.get(f"/api/issues?dataset_id={ds_id}").json().get("issues")  # 治理后有 issues
+
+    # 删除
+    resp = client.delete(f"/api/dataset/{ds_id}")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] is True
+
+    # list/issues 都不再包含该数据集
+    all_ds = client.get("/api/dataset/list?limit=50").json()["datasets"]
+    assert all(d["id"] != ds_id for d in all_ds)
+    assert client.get(f"/api/issues?dataset_id={ds_id}").json().get("issues") == []
+
+    # 重复删除 → 404
+    assert client.delete(f"/api/dataset/{ds_id}").status_code == 404
